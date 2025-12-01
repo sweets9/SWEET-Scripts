@@ -1,0 +1,1597 @@
+#!/usr/bin/env bash
+# =============================================================================
+# SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
+# =============================================================================
+# 
+# ███████╗██╗    ██╗███████╗███████╗████████╗    ███████╗ ██████╗██████╗ ██╗██████╗ ████████╗
+# ██╔════╝██║    ██║██╔════╝██╔════╝╚══██╔══╝    ██╔════╝██╔════╝██╔══██╗██║██╔══██╗╚══██╔══╝
+# ███████╗██║ █╗ ██║█████╗  ███████╗   ██║       ███████╗██║     ██████╔╝██║██████╔╝   ██║   
+# ╚════██║██║███╗██║██╔══╝  ╚════██║   ██║       ╚════██║██║     ██╔══██╗██║██╔══██╗   ██║   
+# ███████║╚███╔███╔╝███████╗███████║   ██║       ███████║╚██████╗██║  ██║██║██║  ██║   ██║   
+# ╚══════╝ ╚══╝╚══╝ ╚══════╝╚══════╝   ╚═╝       ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝   ╚═╝   
+# 
+# Version: 2.0.0
+# Repository: https://github.com/sweets9/SWEET-Scripts
+# License: MIT
+# 
+# Supported Versions:
+#   • Ubuntu 24.04 LTS (recommended)
+#   • Debian 12+ (Bookworm)
+#   • Fedora 40+ (recommended)
+#   • RHEL 9+ / CentOS Stream 9+ / Rocky Linux 9+ / AlmaLinux 9+
+#   • WSL2 (Windows Subsystem for Linux)
+# 
+# Features:
+#   • Smart sudo wrappers for elevated commands
+#   • Clipboard integration (X11/Wayland/macOS)
+#   • WSL detection and X11 DISPLAY setup
+#   • GPU selector (NVIDIA/Intel) for WSL
+#   • Docker/Podman auto-detection and management
+#   • Tailscale VPN management
+#   • Systemd service management with status reporting
+#   • Credential management
+#   • Dev tool shortcuts (Git, Docker, K8s, Python, etc.)
+#   • Multi-shell support (bash & zsh)
+#   • Multi-distro support (Ubuntu/Debian & RHEL/Fedora)
+# 
+# =============================================================================
+
+# Exit if not interactive
+[[ $- != *i* ]] && return
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+export SWEETS_VERSION="2.0.0"
+export SWEETS_DIR="${SWEETS_DIR:-$HOME/.sweet-scripts}"
+export SWEETS_CREDS_FILE="${SWEETS_CREDS_FILE:-$HOME/.sweets-credentials}"
+
+# Detect current shell
+if [ -n "$ZSH_VERSION" ]; then
+    SWEETS_SHELL="zsh"
+elif [ -n "$BASH_VERSION" ]; then
+    SWEETS_SHELL="bash"
+else
+    SWEETS_SHELL="sh"
+fi
+export SWEETS_SHELL
+
+# Detect distro
+_sweets_detect_distro() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        echo "$ID"
+    elif command -v lsb_release &>/dev/null; then
+        lsb_release -si | tr '[:upper:]' '[:lower:]'
+    else
+        echo "unknown"
+    fi
+}
+export SWEETS_DISTRO="$(_sweets_detect_distro)"
+
+# =============================================================================
+# WSL DETECTION & SETUP
+# =============================================================================
+# Detect WSL environment
+_sweets_detect_wsl() {
+    if [[ -f /proc/version ]] && grep -qi microsoft /proc/version 2>/dev/null; then
+        return 0
+    elif [[ -n "$WSL_DISTRO_NAME" ]] || [[ -n "$WSL_INTEROP" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Setup WSL environment
+if _sweets_detect_wsl; then
+    export SWEETS_WSL=true
+    
+    # X11 DISPLAY setup for WSL
+    if [[ -z "$DISPLAY" ]]; then
+        # Try to detect Windows host IP
+        local host_ip
+        host_ip=$(grep -oP '(?<=nameserver\s)\d+\.\d+\.\d+\.\d+' /etc/resolv.conf 2>/dev/null | head -1)
+        
+        if [[ -n "$host_ip" ]]; then
+            export DISPLAY="${host_ip}:0.0"
+        elif [[ -n "$WSL_HOST_IP" ]]; then
+            export DISPLAY="${WSL_HOST_IP}:0.0"
+        else
+            # Fallback to localhost (for WSL2)
+            export DISPLAY=:0.0
+        fi
+    fi
+    
+    # GPU selector for WSL
+    # How it works:
+    # - Sets __GLX_VENDOR_LIBRARY_NAME=nvidia to use NVIDIA GPU drivers in WSL
+    # - Unsets it for Intel/software rendering
+    # - WSLENV ensures environment variables are passed from Windows to WSL
+    # - Auto-detects by checking if nvidia-smi is available and working
+    _sweets_gpu_selector() {
+        local gpu_type="${1:-auto}"
+        
+        case "$gpu_type" in
+            nvidia|NVIDIA)
+                export WSLENV="${WSLENV}LIBGL_ALWAYS_SOFTWARE/u"
+                export __GLX_VENDOR_LIBRARY_NAME=nvidia
+                echo "[+] NVIDIA GPU selected for WSL"
+                ;;
+            intel|Intel|INTEL)
+                export WSLENV="${WSLENV}LIBGL_ALWAYS_SOFTWARE/u"
+                unset __GLX_VENDOR_LIBRARY_NAME
+                echo "[+] Intel GPU selected for WSL"
+                ;;
+            auto|*)
+                # Auto-detect: check for nvidia-smi
+                if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+                    export __GLX_VENDOR_LIBRARY_NAME=nvidia
+                    echo "[+] Auto-detected: NVIDIA GPU"
+                else
+                    unset __GLX_VENDOR_LIBRARY_NAME
+                    echo "[+] Auto-detected: Intel/Software rendering"
+                fi
+                ;;
+        esac
+    }
+    
+    # Auto-setup GPU on WSL detection
+    _sweets_gpu_selector auto
+    
+    # Alias for manual GPU selection
+    alias gpu-select='_sweets_gpu_selector'
+else
+    export SWEETS_WSL=false
+fi
+
+# =============================================================================
+# CREDENTIAL MANAGEMENT
+# =============================================================================
+# Cross-platform stat for permissions (GNU/BSD compatible)
+_sweets_get_perms() {
+    local file="$1"
+    if stat --version &>/dev/null 2>&1; then
+        # GNU stat (Linux)
+        stat -c %a "$file" 2>/dev/null
+    else
+        # BSD stat (macOS)
+        stat -f %Lp "$file" 2>/dev/null
+    fi
+}
+
+sweets-load-creds() {
+    if [[ -f "$SWEETS_CREDS_FILE" ]]; then
+        local perms
+        perms=$(_sweets_get_perms "$SWEETS_CREDS_FILE")
+        if [[ "$perms" != "600" ]]; then
+            chmod 600 "$SWEETS_CREDS_FILE"
+        fi
+        . "$SWEETS_CREDS_FILE"
+    fi
+}
+
+sweets-add-cred() {
+    local name="$1"
+    local value="$2"
+    
+    if [[ -z "$name" ]]; then
+        echo "Usage: sweets-add-cred <NAME> [value]"
+        return 1
+    fi
+    
+    if [[ -z "$value" ]]; then
+        echo -n "Enter value for $name: "
+        read -rs value
+        echo
+    fi
+    
+    [[ ! -f "$SWEETS_CREDS_FILE" ]] && touch "$SWEETS_CREDS_FILE" && chmod 600 "$SWEETS_CREDS_FILE"
+    
+    if grep -q "^export $name=" "$SWEETS_CREDS_FILE" 2>/dev/null; then
+        sed -i.bak "/^export $name=/d" "$SWEETS_CREDS_FILE"
+        rm -f "${SWEETS_CREDS_FILE}.bak"
+    fi
+    
+    echo "export $name=\"$value\"" >> "$SWEETS_CREDS_FILE"
+    export "$name=$value"
+    echo "Credential '$name' saved"
+}
+
+sweets-list-creds() {
+    if [[ -f "$SWEETS_CREDS_FILE" ]]; then
+        echo "Stored credentials:"
+        grep "^export " "$SWEETS_CREDS_FILE" | sed 's/export \([^=]*\)=.*/  - \1/'
+    else
+        echo "No credentials file found"
+    fi
+}
+
+sweets-remove-cred() {
+    local name="$1"
+    [[ -z "$name" ]] && echo "Usage: sweets-remove-cred <NAME>" && return 1
+    
+    if [[ -f "$SWEETS_CREDS_FILE" ]]; then
+        sed -i.bak "/^export $name=/d" "$SWEETS_CREDS_FILE"
+        rm -f "${SWEETS_CREDS_FILE}.bak"
+        unset "$name"
+        echo "Credential '$name' removed"
+    fi
+}
+
+[[ -f "$SWEETS_CREDS_FILE" ]] && . "$SWEETS_CREDS_FILE" 2>/dev/null
+
+# =============================================================================
+# CLIPBOARD SUPPORT
+# =============================================================================
+_sweets_clipboard_cmd() {
+    if [[ -n "$WAYLAND_DISPLAY" ]] && command -v wl-copy &>/dev/null; then
+        echo "wl-copy"
+    elif [[ -n "$DISPLAY" ]] && command -v xclip &>/dev/null; then
+        echo "xclip"
+    elif command -v pbcopy &>/dev/null; then
+        echo "pbcopy"
+    elif [[ -n "$TMUX" ]]; then
+        echo "tmux"
+    else
+        echo "none"
+    fi
+}
+
+clip() {
+    local cmd content
+    cmd="$(_sweets_clipboard_cmd)"
+    
+    if [[ -p /dev/stdin ]]; then
+        content="$(cat)"
+    else
+        content="$*"
+    fi
+    
+    case "$cmd" in
+        wl-copy) echo -n "$content" | wl-copy ;;
+        xclip) echo -n "$content" | xclip -selection clipboard ;;
+        pbcopy) echo -n "$content" | pbcopy ;;
+        tmux) echo -n "$content" | tmux load-buffer - && echo "Copied to tmux buffer" && return ;;
+        *) echo "No clipboard tool. Install xclip or wl-copy." && return 1 ;;
+    esac
+    echo "Copied to clipboard"
+}
+
+clipfile() { [[ -f "$1" ]] && cat "$1" | clip || echo "File not found: $1"; }
+clipwd() { pwd | clip; }
+cliplast() { fc -ln -1 | sed 's/^[[:space:]]*//' | clip; }
+
+# =============================================================================
+# DIRECTORY LISTING & NAVIGATION
+# =============================================================================
+if command -v eza &>/dev/null; then
+    alias ls='eza --icons --group-directories-first'
+    alias ll='eza -la --icons --group-directories-first --git'
+    alias l='eza -l --icons --group-directories-first'
+    alias la='eza -la --icons --group-directories-first'
+    alias lt='eza -la --icons --tree --level=2'
+    alias ltree='eza --icons --tree'
+elif command -v exa &>/dev/null; then
+    alias ls='exa --icons --group-directories-first'
+    alias ll='exa -la --icons --group-directories-first --git'
+    alias l='exa -l --icons --group-directories-first'
+    alias la='exa -la --icons --group-directories-first'
+    alias lt='exa -la --icons --tree --level=2'
+    alias ltree='exa --icons --tree'
+else
+    alias ls='ls --color=auto'
+    alias ll='ls -lah --color=auto'
+    alias l='ls -lh --color=auto'
+    alias la='ls -lAh --color=auto'
+fi
+
+if command -v tree &>/dev/null; then
+    alias tree='tree -C --dirsfirst'
+    alias tree1='tree -C --dirsfirst -L 1'
+    alias tree2='tree -C --dirsfirst -L 2'
+    alias tree3='tree -C --dirsfirst -L 3'
+fi
+
+alias ..='cd ..'
+alias ...='cd ../..'
+alias ....='cd ../../..'
+alias -- -='cd -'
+
+# =============================================================================
+# GIT SHORTCUTS
+# =============================================================================
+alias g='git'
+alias gs='git status'
+alias ga='git add'
+alias gaa='git add -A'
+alias gc='git commit'
+alias gcm='git commit -m'
+alias gp='git push'
+alias gpl='git pull'
+alias gco='git checkout'
+alias gcb='git checkout -b'
+alias gb='git branch'
+alias gba='git branch -a'
+alias gd='git diff'
+alias gds='git diff --staged'
+alias glog='git log --oneline --graph --decorate -15'
+alias glogall='git log --oneline --graph --decorate --all'
+alias gst='git stash'
+alias gstp='git stash pop'
+alias grh='git reset HEAD'
+alias grhh='git reset HEAD --hard'
+
+# GitHub CLI shortcuts (if gh installed)
+if command -v gh &>/dev/null; then
+    alias ghpr='gh pr create'
+    alias ghprl='gh pr list'
+fi
+
+# =============================================================================
+# DOCKER/PODMAN MANAGEMENT (auto-detect)
+# =============================================================================
+# Detect which container runtime is available
+_sweets_container_runtime() {
+    if command -v podman &>/dev/null && ! command -v docker &>/dev/null; then
+        echo "podman"
+    elif command -v docker &>/dev/null; then
+        echo "docker"
+    else
+        echo "none"
+    fi
+}
+
+SWEETS_CONTAINER_RUNTIME="$(_sweets_container_runtime)"
+
+if [[ "$SWEETS_CONTAINER_RUNTIME" == "podman" ]]; then
+    # Podman aliases
+    alias d='podman'
+    alias dc='podman-compose'
+    alias dco='podman-compose'
+    alias dps='podman ps'
+    alias dpsa='podman ps -a'
+    alias di='podman images'
+    alias dex='podman exec -it'
+    alias dlogs='podman logs -f'
+    alias dprune='podman system prune -af'
+    alias dstop='podman stop $(podman ps -q)'
+    alias drm='podman rm $(podman ps -aq)'
+    alias drmi='podman rmi $(podman images -q)'
+    alias dcp='podman cp'
+    alias dbuild='podman build'
+    alias drun='podman run'
+    alias dpull='podman pull'
+    alias dpush='podman push'
+    
+    # Podman-specific
+    alias dstart='podman start'
+    alias drestart='podman restart'
+    alias dtop='podman top'
+    alias dstats='podman stats'
+    
+    export SWEETS_CONTAINER_ENGINE="podman"
+elif [[ "$SWEETS_CONTAINER_RUNTIME" == "docker" ]]; then
+    # Docker aliases
+    alias d='docker'
+    alias dc='docker compose'
+    alias dco='docker-compose'
+    alias dps='docker ps'
+    alias dpsa='docker ps -a'
+    alias di='docker images'
+    alias dex='docker exec -it'
+    alias dlogs='docker logs -f'
+    alias dprune='docker system prune -af'
+    alias dstop='docker stop $(docker ps -q)'
+    alias drm='docker rm $(docker ps -aq)'
+    alias drmi='docker rmi $(docker images -q)'
+    alias dcp='docker cp'
+    alias dbuild='docker build'
+    alias drun='docker run'
+    alias dpull='docker pull'
+    alias dpush='docker push'
+    
+    # Docker-specific
+    alias dstart='docker start'
+    alias drestart='docker restart'
+    alias dtop='docker top'
+    alias dstats='docker stats'
+    
+    export SWEETS_CONTAINER_ENGINE="docker"
+else
+    # Fallback aliases (will fail gracefully if not installed)
+    alias d='docker'
+    alias dc='docker compose'
+    alias dco='docker-compose'
+    alias dps='docker ps 2>/dev/null || podman ps'
+    alias dpsa='docker ps -a 2>/dev/null || podman ps -a'
+    alias di='docker images 2>/dev/null || podman images'
+    alias dex='docker exec -it 2>/dev/null || podman exec -it'
+    alias dlogs='docker logs -f 2>/dev/null || podman logs -f'
+    
+    export SWEETS_CONTAINER_ENGINE="none"
+fi
+
+# =============================================================================
+# KUBERNETES SHORTCUTS
+# =============================================================================
+if command -v kubectl &>/dev/null; then
+    alias k='kubectl'
+    alias kgp='kubectl get pods'
+    alias kgpa='kubectl get pods -A'
+    alias kgs='kubectl get services'
+    alias kgd='kubectl get deployments'
+    alias kgn='kubectl get nodes'
+    alias kga='kubectl get all'
+    alias kd='kubectl describe'
+    alias kl='kubectl logs -f'
+    alias kex='kubectl exec -it'
+    alias kaf='kubectl apply -f'
+    alias kdf='kubectl delete -f'
+    alias kctx='kubectl config current-context'
+    alias kns='kubectl config set-context --current --namespace'
+fi
+
+# =============================================================================
+# PYTHON / UV / POETRY
+# =============================================================================
+alias py='python3'
+alias python='python3'
+alias pip='pip3'
+alias ipy='ipython'
+
+# UV (fast Python package manager)
+if command -v uv &>/dev/null; then
+    alias uvr='uv run'
+    alias uvs='uv sync'
+    alias uva='uv add'
+    alias uvp='uv pip'
+    alias uvpi='uv pip install'
+    alias uvpc='uv pip compile'
+    alias uvv='uv venv'
+fi
+
+# Poetry
+if command -v poetry &>/dev/null; then
+    alias poe='poetry'
+    alias poei='poetry install'
+    alias poea='poetry add'
+    alias poer='poetry run'
+    alias poes='poetry shell'
+    alias poeu='poetry update'
+    alias poeb='poetry build'
+fi
+
+# Virtual environments
+alias venv='python3 -m venv .venv'
+alias activate='source .venv/bin/activate'
+
+# =============================================================================
+# HOMEBREW (Linux)
+# =============================================================================
+if [[ -d "/home/linuxbrew/.linuxbrew" ]]; then
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+elif [[ -d "$HOME/.linuxbrew" ]]; then
+    eval "$($HOME/.linuxbrew/bin/brew shellenv)"
+fi
+
+if command -v brew &>/dev/null; then
+    alias brewup='brew update && brew upgrade && brew cleanup'
+    alias brewi='brew install'
+    alias brews='brew search'
+    alias brewl='brew list'
+    alias brewinfo='brew info'
+fi
+
+# =============================================================================
+# DEV TOOLS
+# =============================================================================
+alias serve='python3 -m http.server'
+alias jsonpp='python3 -m json.tool'
+
+# Node/NPM/Yarn
+if command -v npm &>/dev/null; then
+    alias ni='npm install'
+    alias nid='npm install --save-dev'
+    alias nig='npm install -g'
+    alias nr='npm run'
+    alias ns='npm start'
+    alias nt='npm test'
+    alias nb='npm run build'
+fi
+
+if command -v yarn &>/dev/null; then
+    alias ya='yarn add'
+    alias yad='yarn add --dev'
+    alias yr='yarn run'
+    alias ys='yarn start'
+fi
+
+if command -v pnpm &>/dev/null; then
+    alias pn='pnpm'
+    alias pni='pnpm install'
+    alias pna='pnpm add'
+    alias pnr='pnpm run'
+fi
+
+# Terraform
+if command -v terraform &>/dev/null; then
+    alias tf='terraform'
+    alias tfi='terraform init'
+    alias tfp='terraform plan'
+    alias tfa='terraform apply'
+    alias tfd='terraform destroy'
+    alias tff='terraform fmt'
+    alias tfv='terraform validate'
+fi
+
+# =============================================================================
+# NETWORK UTILITIES
+# =============================================================================
+# Cross-platform local IP detection
+_sweets_localip() {
+    if command -v ip &>/dev/null; then
+        ip -4 addr show 2>/dev/null | grep -o 'inet [0-9.]*' | awk '{print $2}' | grep -v 127.0.0.1 | head -1
+    elif command -v ifconfig &>/dev/null; then
+        ifconfig 2>/dev/null | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}' | head -1
+    elif command -v hostname &>/dev/null; then
+        hostname -I 2>/dev/null | awk '{print $1}'
+    fi
+}
+
+alias myip='curl -s ifconfig.me'
+alias myip6='curl -s ifconfig.me/ip6'
+alias localip='_sweets_localip'
+alias ips="ip -c addr 2>/dev/null || ifconfig 2>/dev/null"
+alias ports='ss -tulanp 2>/dev/null || netstat -tulanp 2>/dev/null'
+alias listening='(ss -tulanp 2>/dev/null || netstat -tulanp 2>/dev/null) | grep LISTEN'
+alias connections='ss -tunap 2>/dev/null || netstat -tunap 2>/dev/null'
+alias flushdns='sudo systemd-resolve --flush-caches 2>/dev/null || sudo resolvectl flush-caches 2>/dev/null || echo "Try: sudo systemctl restart systemd-resolved"'
+
+# DNS shortcuts
+alias dig='dig +short'
+alias digfull='command dig'
+
+# Network testing
+alias pingg='ping -c 5 8.8.8.8'
+
+# HTTP testing
+alias headers='curl -I'
+
+# =============================================================================
+# FILE & ARCHIVE UTILITIES
+# =============================================================================
+# Archive extraction (smart)
+extract() {
+    if [[ -f "$1" ]]; then
+        case "$1" in
+            *.tar.bz2) tar xjf "$1" ;;
+            *.tar.gz)  tar xzf "$1" ;;
+            *.tar.xz)  tar xJf "$1" ;;
+            *.bz2)     bunzip2 "$1" ;;
+            *.rar)     unrar x "$1" ;;
+            *.gz)      gunzip "$1" ;;
+            *.tar)     tar xf "$1" ;;
+            *.tbz2)    tar xjf "$1" ;;
+            *.tgz)     tar xzf "$1" ;;
+            *.zip)     unzip "$1" ;;
+            *.Z)       uncompress "$1" ;;
+            *.7z)      7z x "$1" ;;
+            *)         echo "Cannot extract '$1'" ;;
+        esac
+    else
+        echo "'$1' is not a file"
+    fi
+}
+
+# Create archives
+alias tgz='tar -czvf'
+alias tbz='tar -cjvf'
+alias txz='tar -cJvf'
+
+# File operations
+alias cp='cp -iv'
+alias mv='mv -iv'
+alias rm='rm -Iv'
+alias mkdir='mkdir -pv'
+alias ln='ln -iv'
+
+# Find shortcuts
+alias ff='find . -type f -name'
+alias fd='find . -type d -name'
+alias recent='find . -type f -mmin -30'
+alias large='find . -type f -size +100M'
+
+# File info
+alias filesize='du -sh'
+alias filetype='file'
+alias hex='xxd'
+alias strings='strings -a'
+
+# =============================================================================
+# SYSTEM UTILITIES
+# =============================================================================
+alias h='history'
+alias hg='history | grep'
+alias c='clear'
+alias q='exit'
+alias path='echo $PATH | tr ":" "\n"'
+alias now='date +"%Y-%m-%d %H:%M:%S"'
+alias week='date +%V'
+alias reload='source ~/.${SWEETS_SHELL}rc'
+alias meminfo='free -h'
+alias cpuinfo='lscpu'
+alias diskinfo='df -h'
+alias duh='du -h --max-depth=1 | sort -h'
+alias duf='df -hT'
+alias mounted='mount | column -t'
+
+# Process management
+alias psg='ps aux | grep -v grep | grep'
+
+# System
+alias syslog='sudo tail -f /var/log/syslog 2>/dev/null || sudo tail -f /var/log/messages'
+alias authlog='sudo tail -f /var/log/auth.log 2>/dev/null || sudo tail -f /var/log/secure'
+
+# =============================================================================
+# SMART SUDO WRAPPERS
+# =============================================================================
+vi() {
+    if [[ -e "$1" && ! -w "$1" ]] || [[ ! -e "$1" && ! -w "$(dirname "${1:-.}")" ]]; then
+        sudo vi "$@"
+    else
+        command vi "$@"
+    fi
+}
+
+vim() {
+    if [[ -e "$1" && ! -w "$1" ]] || [[ ! -e "$1" && ! -w "$(dirname "${1:-.}")" ]]; then
+        sudo vim "$@"
+    else
+        command vim "$@"
+    fi
+}
+
+nano() {
+    if [[ -e "$1" && ! -w "$1" ]] || [[ ! -e "$1" && ! -w "$(dirname "${1:-.}")" ]]; then
+        sudo nano "$@"
+    else
+        command nano "$@"
+    fi
+}
+
+alias svi="sudoedit"
+alias svim="SUDO_EDITOR=vim sudoedit"
+alias snano="SUDO_EDITOR=nano sudoedit"
+
+# =============================================================================
+# PACKAGE MANAGERS (auto-sudo)
+# =============================================================================
+# APT (Debian/Ubuntu)
+apt() { [[ $EUID -ne 0 ]] && sudo apt "$@" || command apt "$@"; }
+apt-get() { [[ $EUID -ne 0 ]] && sudo apt-get "$@" || command apt-get "$@"; }
+dpkg() { [[ $EUID -ne 0 ]] && sudo dpkg "$@" || command dpkg "$@"; }
+
+# DNF/YUM (RHEL/Fedora)
+dnf() { [[ $EUID -ne 0 ]] && sudo dnf "$@" || command dnf "$@"; }
+yum() { [[ $EUID -ne 0 ]] && sudo yum "$@" || command yum "$@"; }
+
+# =============================================================================
+# SYSTEMD (smart sudo with status reporting)
+# =============================================================================
+# Color codes for status
+_sweets_status_green() { echo -e "\033[0;32m✓\033[0m"; }
+_sweets_status_red() { echo -e "\033[0;31m✗\033[0m"; }
+_sweets_status_amber() { echo -e "\033[1;33m⚠\033[0m"; }
+
+# Enhanced systemctl with auto-remediation and status reporting
+systemctl() {
+    local cmd="$1"
+    local service="$2"
+    local original_args=("$@")
+    local retry_count=0
+    local max_retries=1
+    
+    # Execute command
+    local exit_code
+    if [[ "$*" == *"--user"* ]] || [[ "$cmd" =~ ^(status|is-active|is-enabled|is-failed|show|help|cat|list-)$ ]] || [[ "$cmd" == "list-"* ]]; then
+        command systemctl "$@"
+        exit_code=$?
+    elif [[ $EUID -ne 0 ]]; then
+        sudo systemctl "$@"
+        exit_code=$?
+    else
+        command systemctl "$@"
+        exit_code=$?
+    fi
+    
+    # Auto-remediate: Check for daemon-reload needed errors
+    if [[ $exit_code -ne 0 ]] && [[ "$cmd" =~ ^(start|stop|restart|enable|disable|reload)$ ]] && [[ -n "$service" ]]; then
+        # Check if service file was recently modified (within last 5 minutes)
+        local service_file
+        service_file=$(command systemctl show -p FragmentPath "$service" 2>/dev/null | cut -d'=' -f2)
+        if [[ -n "$service_file" && -f "$service_file" ]]; then
+            local file_age
+            if stat --version &>/dev/null 2>&1; then
+                file_age=$(($(date +%s) - $(stat -c %Y "$service_file" 2>/dev/null || echo 0)))
+            else
+                file_age=$(($(date +%s) - $(stat -f %m "$service_file" 2>/dev/null || echo 0)))
+            fi
+            # If file was modified recently and command failed, try daemon-reload
+            if [[ $file_age -lt 300 ]] && [[ $retry_count -lt $max_retries ]]; then
+                echo -e "$(_sweets_status_amber) Service file changed, running daemon-reload and retrying..."
+                if [[ $EUID -ne 0 ]]; then
+                    sudo systemctl daemon-reload
+                else
+                    command systemctl daemon-reload
+                fi
+                
+                # Retry the original command
+                retry_count=$((retry_count + 1))
+                if [[ "$*" == *"--user"* ]] || [[ "$cmd" =~ ^(status|is-active|is-enabled|is-failed|show|help|cat|list-)$ ]] || [[ "$cmd" == "list-"* ]]; then
+                    command systemctl "${original_args[@]}"
+                    exit_code=$?
+                elif [[ $EUID -ne 0 ]]; then
+                    sudo systemctl "${original_args[@]}"
+                    exit_code=$?
+                else
+                    command systemctl "${original_args[@]}"
+                    exit_code=$?
+                fi
+            fi
+        fi
+    fi
+    
+    # Status reporting for start/stop/restart/enable/disable (only show on failure)
+    if [[ "$cmd" =~ ^(start|stop|restart|enable|disable|reload)$ ]] && [[ -n "$service" ]]; then
+        sleep 0.5  # Brief pause for systemd to update
+        local is_active
+        is_active=$(systemctl is-active "$service" 2>/dev/null)
+        local is_enabled
+        is_enabled=$(systemctl is-enabled "$service" 2>/dev/null 2>&1)
+        
+        if [[ "$cmd" == "start" ]] || [[ "$cmd" == "restart" ]]; then
+            if [[ "$is_active" != "active" ]]; then
+                echo -e "$(_sweets_status_red) Service '$service' failed to start"
+                echo "  Recent logs:"
+                journalctl -u "$service" --no-pager -n 10 2>/dev/null | tail -5 || true
+                echo "  Run 'systemctl status $service' for full details"
+            fi
+        elif [[ "$cmd" == "stop" ]] && [[ "$is_active" != "inactive" ]] && [[ "$is_active" != "failed" ]]; then
+            echo -e "$(_sweets_status_amber) Service '$service' may still be running"
+        elif [[ "$cmd" == "enable" ]] && [[ "$is_enabled" != "enabled" ]] && [[ "$is_enabled" != "enabled-runtime" ]]; then
+            echo -e "$(_sweets_status_red) Service '$service' failed to enable"
+        elif [[ "$cmd" == "disable" ]] && [[ "$is_enabled" != "disabled" ]]; then
+            echo -e "$(_sweets_status_amber) Service '$service' may still be enabled"
+        fi
+    fi
+    
+    return $exit_code
+}
+
+# Minimal service aliases (systemctl wrapper handles auto-remediation)
+alias sc='systemctl'
+
+journalctl() {
+    if [[ "$*" == *"-f"* ]] || [[ "$*" == *"--follow"* ]] || [[ "$*" == *"--vacuum"* ]]; then
+        [[ $EUID -ne 0 ]] && sudo journalctl "$@" || command journalctl "$@"
+    else
+        command journalctl "$@"
+    fi
+}
+
+# Quick log viewing on startup (show recent errors/warnings)
+_sweets_show_startup_logs() {
+    if [[ -n "$SWEETS_QUIET" ]]; then
+        return 0
+    fi
+    
+    # Check for failed services
+    local failed_count
+    failed_count=$(systemctl --failed --no-legend 2>/dev/null | wc -l)
+    if [[ $failed_count -gt 0 ]]; then
+        echo -e "$(_sweets_status_red) $failed_count failed service(s) detected"
+        echo "  Run 'systemctl --failed' or 'scfailed' to view"
+    fi
+    
+    # Show recent critical/error log entries (last 5 minutes)
+    if command -v journalctl &>/dev/null; then
+        local recent_errors
+        recent_errors=$(journalctl --since "5 minutes ago" --priority=err --no-pager 2>/dev/null | wc -l)
+        if [[ $recent_errors -gt 0 ]]; then
+            echo -e "$(_sweets_status_amber) $recent_errors recent error(s) in system logs"
+            echo "  Run 'journalctl -p err --since \"5 minutes ago\"' to view"
+        fi
+    fi
+}
+
+# Run startup log check (only once per session)
+if [[ -z "$SWEETS_LOG_CHECKED" ]]; then
+    _sweets_show_startup_logs
+    export SWEETS_LOG_CHECKED=true
+fi
+
+# =============================================================================
+# NETWORK/FIREWALL (auto-sudo)
+# =============================================================================
+iptables() { [[ $EUID -ne 0 ]] && sudo iptables "$@" || command iptables "$@"; }
+ip6tables() { [[ $EUID -ne 0 ]] && sudo ip6tables "$@" || command ip6tables "$@"; }
+ufw() { [[ $EUID -ne 0 ]] && sudo ufw "$@" || command ufw "$@"; }
+firewall-cmd() { [[ $EUID -ne 0 ]] && sudo firewall-cmd "$@" || command firewall-cmd "$@"; }
+tcpdump() { [[ $EUID -ne 0 ]] && sudo tcpdump "$@" || command tcpdump "$@"; }
+
+# =============================================================================
+# DISK/FILESYSTEM (auto-sudo)
+# =============================================================================
+mount() {
+    if [[ $# -eq 0 ]] || [[ "$1" == "-l" ]]; then
+        command mount "$@"
+    elif [[ $EUID -ne 0 ]]; then
+        sudo mount "$@"
+    else
+        command mount "$@"
+    fi
+}
+umount() { [[ $EUID -ne 0 ]] && sudo umount "$@" || command umount "$@"; }
+fdisk() { [[ "$*" == *"-l"* ]] && { command fdisk "$@" 2>/dev/null || sudo fdisk "$@"; } || { [[ $EUID -ne 0 ]] && sudo fdisk "$@" || command fdisk "$@"; }; }
+
+# =============================================================================
+# USER MANAGEMENT (auto-sudo)
+# =============================================================================
+useradd() { [[ $EUID -ne 0 ]] && sudo useradd "$@" || command useradd "$@"; }
+userdel() { [[ $EUID -ne 0 ]] && sudo userdel "$@" || command userdel "$@"; }
+usermod() { [[ $EUID -ne 0 ]] && sudo usermod "$@" || command usermod "$@"; }
+groupadd() { [[ $EUID -ne 0 ]] && sudo groupadd "$@" || command groupadd "$@"; }
+groupdel() { [[ $EUID -ne 0 ]] && sudo groupdel "$@" || command groupdel "$@"; }
+visudo() { [[ $EUID -ne 0 ]] && sudo visudo "$@" || command visudo "$@"; }
+chown() { [[ $EUID -ne 0 ]] && sudo chown "$@" || command chown "$@"; }
+
+passwd() {
+    if [[ $EUID -ne 0 && -n "$1" ]]; then
+        sudo passwd "$@"
+    else
+        command passwd "$@"
+    fi
+}
+
+# =============================================================================
+# DOCKER/PODMAN (smart - checks group)
+# =============================================================================
+docker() {
+    if [[ "$SWEETS_CONTAINER_ENGINE" == "podman" ]]; then
+        # Podman doesn't need sudo typically
+        command podman "$@"
+    elif [[ $EUID -ne 0 ]] && ! groups 2>/dev/null | grep -qw docker; then
+        sudo docker "$@"
+    else
+        command docker "$@"
+    fi
+}
+
+podman() {
+    command podman "$@"
+}
+
+# =============================================================================
+# SYSTEM POWER
+# =============================================================================
+alias reboot='sudo reboot'
+alias poweroff='sudo poweroff'
+alias shutdown='sudo shutdown'
+
+# =============================================================================
+# KERNEL MODULES
+# =============================================================================
+modprobe() { [[ $EUID -ne 0 ]] && sudo modprobe "$@" || command modprobe "$@"; }
+rmmod() { [[ $EUID -ne 0 ]] && sudo rmmod "$@" || command rmmod "$@"; }
+dmesg() { command dmesg "$@" 2>/dev/null || sudo dmesg "$@"; }
+
+# =============================================================================
+# TMUX ALIASES
+# =============================================================================
+alias tscroll='tmux copy-mode'
+alias tpaste='tmux paste-buffer'
+alias tn='tmux new -s'
+alias ta='tmux attach -t'
+alias tl='tmux list-sessions'
+alias tk='tmux kill-session -t'
+
+# =============================================================================
+# SWEETS COMMANDS
+# =============================================================================
+sweets-update() {
+    local dir="${SWEETS_DIR:-$HOME/.sweet-scripts}"
+    echo "Updating SWEET-Scripts..."
+    if [[ -d "$dir/.git" ]]; then
+        (cd "$dir" && git pull)
+        . "$dir/sweets.sh"
+        echo "Updated to v${SWEETS_VERSION}"
+    else
+        echo "Git repo not found. Re-run install.sh"
+    fi
+}
+
+sweets-info() {
+    cat << EOF
+SWEET-Scripts v${SWEETS_VERSION}
+  Shell: $SWEETS_SHELL
+  Distro: $SWEETS_DISTRO
+  Install: ${SWEETS_DIR:-$HOME/.sweet-scripts}
+  Creds: $SWEETS_CREDS_FILE
+
+Run 'sweets-help' for commands
+EOF
+}
+
+sweets-help() {
+    cat << 'EOF'
+SWEET-Scripts - Quick Reference
+
+KEYBOARD SHORTCUTS:
+  Ctrl+A/E      Start/End of line      Ctrl+W        Delete word back
+  Alt+B/F       Word back/forward      Ctrl+Left/Right  Word nav (alt)
+  Ctrl+R/S      History search         Ctrl+U/K      Delete to start/end
+  Ctrl+Y        Paste deleted          Ctrl+L        Clear screen
+
+CLIPBOARD:
+  clip <text>   Copy to clipboard      clipfile      Copy file contents
+  clipwd        Copy current path      cliplast      Copy last command
+
+CREDENTIALS:
+  sweets-add-cred <NAME>    sweets-list-creds    sweets-remove-cred <NAME>
+
+NAVIGATION:
+  ll, l, la     Detailed listing       lt, ltree     Tree view
+  .., ..., .... Go up directories      tree1/2/3     Tree with depth
+
+GIT:      g, gs, ga, gc, gcm, gp, gpl, gco, gcb, gb, gd, gds, glog
+GITHUB:   ghpr, ghprl, ghprv, ghis, ghic, ghrepo
+DOCKER:   d, dc, dps, dpsa, di, dex, dlogs, dprune, dstop, drm, drmi
+K8S:      k, kgp, kgpa, kgs, kgd, kga, kd, kl, kex, kaf, kdf, kctx, kns
+PYTHON:   py, venv, activate, deact
+UV:       uvr, uvs, uva, uvp, uvpi, uvv
+POETRY:   poe, poei, poea, poer, poes, poeu, poeb
+BREW:     brewup, brewi, brews, brewl, brewinfo
+NODE:     ni, nid, nig, nr, ns, nt, nb
+TERRAFORM: tf, tfi, tfp, tfa, tfd, tff, tfv
+TAILSCALE: ts, tss, tsip, tsup, tsdown, tsping
+SSH:      sshimport <user> [target]  - Import GitHub keys to authorized_keys
+
+NETWORK:
+  myip, myip6   Public IP              localip, ips  Local IPs
+  ports         All ports              listening     Open ports
+  connections   Active connections     dig, ns       DNS lookup
+  rdns          Reverse DNS            pingg, pingd  Quick ping tests
+  headers       HTTP headers           httpcode      HTTP status code
+
+FILES:
+  extract <file>  Smart extract        tgz, tbz, txz Create archives
+  ff, fd          Find file/dir        recent, large Find by time/size
+  filesize        Show size            hex, strings  Binary tools
+
+SYSTEM:
+  meminfo       Memory usage           cpuinfo       CPU info
+  diskinfo, duf Disk usage             duh           Dir sizes
+  psg           Find process           topmem/cpu    Top consumers
+  services      Running services       failed        Failed services
+  syslog        Tail syslog            authlog       Auth log
+  users         Who's logged in        lastlogin     Recent logins
+
+TMUX:
+  tn/ta/tl/tk   New/Attach/List/Kill   tscroll       Enter copy mode
+  Prefix+k/j    Scroll up / copy mode  Mouse wheel   Scroll
+
+VIM:  <leader>y  Yank to clipboard     <leader>p  Paste from clipboard
+
+SWEETS:
+  sweets           Interactive menu    sweets-update    Update
+  sweets-info      Version info        sweets-help      This help
+  sweets-keys      Keyboard shortcuts
+EOF
+}
+
+sweets-keys() {
+    cat << 'EOF'
+Keyboard Shortcuts:
+  Ctrl+A        Start of line       Ctrl+E        End of line
+  Ctrl+W        Delete word back    Ctrl+U        Delete to start
+  Alt+B         Word back           Alt+F         Word forward
+  Ctrl+Left     Word back (alt)     Ctrl+Right    Word forward (alt)
+  Ctrl+R        Search history      Ctrl+L        Clear screen
+  Ctrl+K        Delete to end       Ctrl+Y        Paste deleted
+  Tab           Auto-complete       Up/Down       History
+EOF
+}
+
+# =============================================================================
+# TAILSCALE MANAGEMENT
+# =============================================================================
+sweets-tailscale() {
+    local action="${1:-status}"
+    local auth_key="$2"
+    local use_dns=false
+    local accept_routes=true
+    
+    # Parse arguments
+    shift 2>/dev/null || true
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --dns) use_dns=true; shift ;;
+            --no-routes) accept_routes=false; shift ;;
+            *) shift ;;
+        esac
+    done
+    
+    case "$action" in
+        install)
+            if [[ -z "$auth_key" ]]; then
+                echo "Usage: sweets-tailscale install <authkey> [--dns] [--no-routes]"
+                echo ""
+                echo "Options:"
+                echo "  --dns        Enable Tailscale DNS (default: off)"
+                echo "  --no-routes  Don't accept routes (default: on)"
+                echo ""
+                echo "Get key from: https://login.tailscale.com/admin/settings/keys"
+                return 1
+            fi
+            
+            echo "[*] Installing Tailscale..."
+            
+            # Install based on distro
+            case "$SWEETS_DISTRO" in
+                ubuntu|debian|pop|linuxmint)
+                    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+                    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+                    sudo apt update && sudo apt install -y tailscale
+                    ;;
+                rhel|centos|rocky|almalinux|fedora)
+                    sudo dnf config-manager --add-repo https://pkgs.tailscale.com/stable/fedora/tailscale.repo 2>/dev/null || \
+                    sudo yum-config-manager --add-repo https://pkgs.tailscale.com/stable/rhel/8/tailscale.repo 2>/dev/null || true
+                    sudo dnf install -y tailscale 2>/dev/null || sudo yum install -y tailscale
+                    ;;
+                *)
+                    echo "[*] Unknown distro, using curl installer..."
+                    curl -fsSL https://tailscale.com/install.sh | sh
+                    ;;
+            esac
+            
+            echo "[+] Starting tailscaled..."
+            sudo systemctl enable --now tailscaled
+            sleep 2
+            
+            echo "[+] Connecting..."
+            local args="--authkey=$auth_key"
+            [[ "$use_dns" == false ]] && args="$args --accept-dns=false"
+            [[ "$accept_routes" == true ]] && args="$args --accept-routes"
+            sudo tailscale up $args
+            
+            echo "[+] Enabling auto-update..."
+            sudo tailscale set --auto-update 2>/dev/null || true
+            
+            echo ""
+            echo "[+] Tailscale installed and connected!"
+            tailscale status
+            echo ""
+            echo "Tailscale IP: $(tailscale ip -4 2>/dev/null)"
+            [[ "$use_dns" == false ]] && echo "Note: DNS disabled. Enable with: tailscale set --accept-dns=true"
+            ;;
+        uninstall)
+            echo "[*] Uninstalling Tailscale..."
+            sudo tailscale down 2>/dev/null || true
+            if command -v apt &>/dev/null; then
+                sudo apt remove -y tailscale
+                sudo rm -f /usr/share/keyrings/tailscale-archive-keyring.gpg
+                sudo rm -f /etc/apt/sources.list.d/tailscale.list
+            elif command -v dnf &>/dev/null; then
+                sudo dnf remove -y tailscale
+                sudo rm -f /etc/yum.repos.d/tailscale.repo
+            elif command -v yum &>/dev/null; then
+                sudo yum remove -y tailscale
+            fi
+            echo "[+] Tailscale removed"
+            ;;
+        up)
+            echo "[*] Connecting Tailscale..."
+            sudo tailscale up
+            ;;
+        down)
+            echo "[*] Disconnecting Tailscale..."
+            sudo tailscale down
+            ;;
+        status)
+            if command -v tailscale &>/dev/null; then
+                tailscale status
+            else
+                echo "Tailscale not installed. Run: sweets-tailscale install <authkey>"
+            fi
+            ;;
+        ip)
+            tailscale ip -4 2>/dev/null || echo "Not connected"
+            ;;
+        *)
+            echo "Usage: sweets-tailscale <command> [options]"
+            echo ""
+            echo "Commands:"
+            echo "  install <key>  Install and connect (--dns, --no-routes)"
+            echo "  uninstall      Remove Tailscale"
+            echo "  up             Connect"
+            echo "  down           Disconnect"
+            echo "  status         Show status"
+            echo "  ip             Show Tailscale IP"
+            ;;
+    esac
+}
+
+# Tailscale aliases
+alias ts='sweets-tailscale'
+alias tss='tailscale status'
+alias tsip='tailscale ip -4'
+alias tsup='sudo tailscale up'
+alias tsdown='sudo tailscale down'
+alias tsping='tailscale ping'
+
+# =============================================================================
+# SSH KEY MANAGEMENT
+# =============================================================================
+sweets-ssh-import() {
+    local source="$1"
+    local target_user="${2:-root}"
+    local target_home
+    local auth_file
+    
+    if [[ -z "$source" ]]; then
+        echo "Usage: sweets-ssh-import <github-username|url> [target-user]"
+        echo ""
+        echo "Examples:"
+        echo "  sweets-ssh-import myuser              # Import from github.com/myuser.keys"
+        echo "  sweets-ssh-import myuser \$USER        # Add to current user"
+        echo "  sweets-ssh-import https://example.com/keys.pub root"
+        echo ""
+        echo "This fetches public keys and adds them to authorized_keys."
+        return 1
+    fi
+    
+    # Determine target home directory
+    if [[ "$target_user" == "root" ]]; then
+        target_home="/root"
+    else
+        target_home=$(eval echo "~$target_user")
+    fi
+    auth_file="$target_home/.ssh/authorized_keys"
+    
+    # Build URL
+    local url="$source"
+    if [[ ! "$source" =~ ^https?:// ]]; then
+        # Assume GitHub username
+        url="https://github.com/${source}.keys"
+    fi
+    
+    echo "[*] Fetching keys from: $url"
+    
+    # Fetch keys
+    local keys
+    keys=$(curl -fsSL "$url" 2>/dev/null)
+    
+    if [[ -z "$keys" ]]; then
+        echo "[!] No keys found or failed to fetch"
+        return 1
+    fi
+    
+    local key_count
+    key_count=$(echo "$keys" | wc -l)
+    
+    echo ""
+    echo "[i] Found $key_count key(s):"
+    echo "$keys" | head -3 | while read -r line; do
+        echo "    ${line:0:60}..."
+    done
+    [[ $key_count -gt 3 ]] && echo "    ... and $((key_count - 3)) more"
+    echo ""
+    echo "[!] These keys will be added to: $auth_file"
+    echo "[!] Target user: $target_user"
+    echo ""
+    echo -n "Proceed? (y/N): "
+    read -r confirm
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        return 1
+    fi
+    
+    # Create .ssh directory if needed
+    if [[ "$target_user" == "root" ]]; then
+        sudo mkdir -p "$target_home/.ssh"
+        sudo chmod 700 "$target_home/.ssh"
+        
+        # Add keys (avoiding duplicates)
+        echo "$keys" | while read -r key; do
+            if ! sudo grep -qF "$key" "$auth_file" 2>/dev/null; then
+                echo "$key" | sudo tee -a "$auth_file" >/dev/null
+            fi
+        done
+        
+        sudo chmod 600 "$auth_file"
+        sudo chown -R root:root "$target_home/.ssh"
+    else
+        mkdir -p "$target_home/.ssh"
+        chmod 700 "$target_home/.ssh"
+        
+        echo "$keys" | while read -r key; do
+            if ! grep -qF "$key" "$auth_file" 2>/dev/null; then
+                echo "$key" >> "$auth_file"
+            fi
+        done
+        
+        chmod 600 "$auth_file"
+    fi
+    
+    echo "[+] Keys added to $auth_file"
+}
+
+alias sshimport='sweets-ssh-import'
+
+# =============================================================================
+# INTERACTIVE MENU
+# =============================================================================
+sweets-menu() {
+    local choice
+    while true; do
+        clear
+        echo -e "\033[36m\033[1m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        echo -e "\033[1m  SWEET-Scripts v${SWEETS_VERSION}\033[0m"
+        echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        echo ""
+        echo -e "\033[33m  INFORMATION\033[0m"
+        echo "  1) Show all aliases & shortcuts"
+        echo "  2) Show keyboard shortcuts"
+        echo "  3) Show system info"
+        echo ""
+        echo -e "\033[33m  CREDENTIALS\033[0m"
+        echo "  4) Add credential"
+        echo "  5) List credentials"
+        echo "  6) Remove credential"
+        echo ""
+        echo -e "\033[33m  NETWORK\033[0m"
+        echo "  7) Show IP addresses"
+        echo "  8) Show open ports"
+        echo "  9) DNS lookup"
+        echo ""
+        echo -e "\033[33m  TOOLS\033[0m"
+        echo "  10) Setup Tailscale"
+        echo "  11) Import SSH keys"
+        echo "  12) Install dependencies"
+        echo "  13) Show package list"
+        echo ""
+        echo -e "\033[33m  SWEETS\033[0m"
+        echo "  u) Update SWEET-Scripts"
+        echo "  h) Full help"
+        echo "  q) Quit menu"
+        echo ""
+        echo -n "  Select option: "
+        read -r choice
+        
+        case $choice in
+            1)
+                clear
+                sweets-help
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            2)
+                clear
+                sweets-keys
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            3)
+                clear
+                echo -e "\033[36m\033[1m=== System Information ===\033[0m"
+                echo ""
+                echo -e "\033[1mOS:\033[0m $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2)"
+                echo -e "\033[1mKernel:\033[0m $(uname -r)"
+                echo -e "\033[1mHostname:\033[0m $(hostname)"
+                echo -e "\033[1mUptime:\033[0m $(uptime -p 2>/dev/null || uptime)"
+                echo -e "\033[1mShell:\033[0m $SWEETS_SHELL"
+                echo ""
+                echo -e "\033[1mCPU:\033[0m $(grep 'model name' /proc/cpuinfo 2>/dev/null | head -1 | cut -d':' -f2 | xargs)"
+                echo -e "\033[1mMemory:\033[0m $(free -h 2>/dev/null | awk '/^Mem:/{print $3 "/" $2}')"
+                echo -e "\033[1mDisk:\033[0m $(df -h / 2>/dev/null | awk 'NR==2{print $3 "/" $2 " (" $5 " used)"}')"
+                echo ""
+                echo -e "\033[1mPublic IP:\033[0m $(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo 'N/A')"
+                echo -e "\033[1mLocal IP:\033[0m $(_sweets_localip)"
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            4)
+                clear
+                echo -e "\033[36m\033[1m=== Add Credential ===\033[0m"
+                echo ""
+                echo -n "Enter credential name: "
+                read -r cred_name
+                if [[ -n "$cred_name" ]]; then
+                    sweets-add-cred "$cred_name"
+                fi
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            5)
+                clear
+                echo -e "\033[36m\033[1m=== Stored Credentials ===\033[0m"
+                echo ""
+                sweets-list-creds
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            6)
+                clear
+                echo -e "\033[36m\033[1m=== Remove Credential ===\033[0m"
+                echo ""
+                sweets-list-creds
+                echo ""
+                echo -n "Enter credential name to remove: "
+                read -r cred_name
+                if [[ -n "$cred_name" ]]; then
+                    sweets-remove-cred "$cred_name"
+                fi
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            7)
+                clear
+                echo -e "\033[36m\033[1m=== IP Addresses ===\033[0m"
+                echo ""
+                echo -e "\033[1mPublic IPv4:\033[0m $(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo 'N/A')"
+                echo -e "\033[1mPublic IPv6:\033[0m $(curl -s --connect-timeout 3 ifconfig.me/ip6 2>/dev/null || echo 'N/A')"
+                echo ""
+                echo -e "\033[1mLocal Interfaces:\033[0m"
+                ip -c addr 2>/dev/null || ifconfig 2>/dev/null || echo "No network tools available"
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            8)
+                clear
+                echo -e "\033[36m\033[1m=== Open Ports ===\033[0m"
+                echo ""
+                ss -tulanp 2>/dev/null | head -30 || netstat -tulanp 2>/dev/null | head -30 || echo "No network tools available"
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            9)
+                clear
+                echo -e "\033[36m\033[1m=== DNS Lookup ===\033[0m"
+                echo ""
+                echo -n "Enter hostname: "
+                read -r hostname
+                if [[ -n "$hostname" ]]; then
+                    echo ""
+                    echo -e "\033[1mA Record:\033[0m"
+                    dig +short "$hostname" 2>/dev/null || nslookup "$hostname" 2>/dev/null || host "$hostname" 2>/dev/null || echo "No DNS tools available"
+                    echo ""
+                    echo -e "\033[1mMX Record:\033[0m"
+                    dig +short MX "$hostname" 2>/dev/null || echo "N/A"
+                fi
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            10)
+                clear
+                echo -e "\033[36m\033[1m=== Tailscale ===\033[0m"
+                echo ""
+                if command -v tailscale &>/dev/null; then
+                    echo "Status:"
+                    tailscale status 2>/dev/null || echo "Not connected"
+                    echo ""
+                    echo "IP: $(tailscale ip -4 2>/dev/null || echo 'N/A')"
+                    echo ""
+                    echo "Commands: ts up, ts down, ts status, ts ip"
+                else
+                    echo "Tailscale not installed."
+                    echo ""
+                    echo "Install with:"
+                    echo "  - DNS disabled (default)"
+                    echo "  - Accept subnet routes enabled"
+                    echo "  - Auto-update enabled"
+                    echo ""
+                    echo -n "Enter Tailscale auth key (or Enter to skip): "
+                    read -r ts_key
+                    if [[ -n "$ts_key" ]]; then
+                        echo ""
+                        echo -n "Enable Tailscale DNS? (y/N): "
+                        read -r ts_dns
+                        local dns_flag=""
+                        [[ "$ts_dns" =~ ^[Yy]$ ]] && dns_flag="--dns"
+                        
+                        sweets-tailscale install "$ts_key" $dns_flag
+                    fi
+                fi
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            11)
+                clear
+                echo -e "\033[36m\033[1m=== Import SSH Keys ===\033[0m"
+                echo ""
+                echo "Import public keys from GitHub or URL to authorized_keys."
+                echo ""
+                echo -n "GitHub username or URL: "
+                read -r ssh_source
+                if [[ -n "$ssh_source" ]]; then
+                    echo ""
+                    echo "Target user (default: root):"
+                    echo -n "> "
+                    read -r ssh_target
+                    [[ -z "$ssh_target" ]] && ssh_target="root"
+                    
+                    sweets-ssh-import "$ssh_source" "$ssh_target"
+                fi
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            12)
+                clear
+                echo -e "\033[36m\033[1m=== Install Dependencies ===\033[0m"
+                echo ""
+                local install_script="${SWEETS_DIR:-$HOME/.sweet-scripts}/install.sh"
+                if [[ -f "$install_script" ]]; then
+                    echo "This will install recommended packages."
+                    echo -n "Continue? (y/N): "
+                    read -r confirm
+                    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                        bash "$install_script" --skip-zsh
+                    fi
+                else
+                    echo "Install script not found."
+                fi
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            13)
+                clear
+                local install_script="${SWEETS_DIR:-$HOME/.sweet-scripts}/install.sh"
+                if [[ -f "$install_script" ]]; then
+                    bash "$install_script" --show-packages
+                else
+                    echo "Install script not found."
+                fi
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            u|U)
+                clear
+                sweets-update
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            h|H)
+                clear
+                sweets-help
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            q|Q|0)
+                clear
+                return 0
+                ;;
+            *)
+                echo -e "\033[31mInvalid option\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# Alias for menu
+alias sweets='sweets-menu'
+
+# Alias for compatibility
+alias sweet-update='sweets-update'
+
+# =============================================================================
+# SHELL-SPECIFIC SETUP
+# =============================================================================
+if [[ "$SWEETS_SHELL" == "zsh" ]]; then
+    # ZSH completions
+    autoload -Uz compinit
+    if [[ -n ${ZDOTDIR}/.zcompdump(#qN.mh+24) ]]; then
+        compinit
+    else
+        compinit -C
+    fi
+    
+    zstyle ':completion:*' menu select
+    zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+    zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+    
+    # kubectl completion
+    command -v kubectl &>/dev/null && source <(kubectl completion zsh 2>/dev/null) && compdef k=kubectl
+    
+    # History settings
+    HISTFILE=~/.zsh_history
+    HISTSIZE=50000
+    SAVEHIST=50000
+    setopt EXTENDED_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_SPACE SHARE_HISTORY
+    
+    # Use emacs-style keybindings (Ctrl+A, Ctrl+E, etc.)
+    bindkey -e
+    
+    # History search with up/down (searches based on current input)
+    bindkey '^[[A' history-search-backward
+    bindkey '^[[B' history-search-forward
+    
+    # Word navigation: Alt+B, Alt+F (default in emacs mode)
+    bindkey '^[b' backward-word
+    bindkey '^[f' forward-word
+    
+    # Ctrl+Left/Right for word navigation
+    bindkey '^[[1;5D' backward-word
+    bindkey '^[[1;5C' forward-word
+    
+    # Enable Ctrl+S for forward history search (disable flow control)
+    stty -ixon 2>/dev/null
+    bindkey '^S' history-incremental-search-forward
+    
+    # Home/End keys
+    bindkey '^[[H' beginning-of-line
+    bindkey '^[[F' end-of-line
+    bindkey '^[[1~' beginning-of-line
+    bindkey '^[[4~' end-of-line
+    
+    # Delete key
+    bindkey '^[[3~' delete-char
+    
+elif [[ "$SWEETS_SHELL" == "bash" ]]; then
+    # Bash completions
+    if [[ -f /etc/bash_completion ]]; then
+        . /etc/bash_completion
+    elif [[ -f /usr/share/bash-completion/bash_completion ]]; then
+        . /usr/share/bash-completion/bash_completion
+    fi
+    
+    # kubectl completion
+    command -v kubectl &>/dev/null && source <(kubectl completion bash 2>/dev/null) && complete -F __start_kubectl k
+    
+    # Docker completion
+    if [[ -f /usr/share/bash-completion/completions/docker ]]; then
+        . /usr/share/bash-completion/completions/docker
+    fi
+    
+    # History settings
+    HISTSIZE=50000
+    HISTFILESIZE=50000
+    HISTCONTROL=ignoreboth:erasedups
+    shopt -s histappend
+    
+    # Better globbing
+    shopt -s globstar 2>/dev/null
+    
+    # Enable Ctrl+S for forward history search
+    stty -ixon 2>/dev/null
+    
+    # Word navigation with Ctrl+Left/Right
+    bind '"\e[1;5D": backward-word' 2>/dev/null
+    bind '"\e[1;5C": forward-word' 2>/dev/null
+fi
+
+# Git completion alias
+command -v git &>/dev/null && command -v __git_complete &>/dev/null && __git_complete g __git_main 2>/dev/null
+
+# Terraform completion
+if command -v terraform &>/dev/null; then
+    complete -C terraform terraform 2>/dev/null
+    complete -C terraform tf 2>/dev/null
+fi
