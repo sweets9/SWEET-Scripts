@@ -2405,6 +2405,19 @@ sweets-security-setup() {
         echo "[+] rsyslog installed"
     fi
     
+    # Fix rsyslog imklog permission issue (if /proc/kmsg is not accessible)
+    if [[ "$rsyslog_installed" == true ]] && [[ -f /etc/rsyslog.conf ]]; then
+        # Check if imklog module is causing issues and disable it if needed
+        if ! sudo test -r /proc/kmsg 2>/dev/null; then
+            echo "[*] Configuring rsyslog to handle /proc/kmsg permission issue..."
+            # Comment out or disable imklog if it's causing errors
+            if grep -q "^module.*imklog" /etc/rsyslog.conf 2>/dev/null; then
+                sudo sed -i 's/^\(module.*imklog\)/#\1/' /etc/rsyslog.conf 2>/dev/null || true
+                echo "[+] Disabled imklog module (kernel log not accessible)"
+            fi
+        fi
+    fi
+    
     echo ""
     echo "[*] Installing and configuring auditd..."
     if ! command -v auditd &>/dev/null && ! systemctl list-unit-files 2>/dev/null | grep -q auditd; then
