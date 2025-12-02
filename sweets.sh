@@ -2,7 +2,7 @@
 # =============================================================================
 # SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
 # =============================================================================
-# Version: 2.2.3
+# Version: 2.2.4
 # Repository: https://github.com/sweets9/SWEET-Scripts
 # License: MIT
 # 
@@ -34,7 +34,7 @@
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-export SWEETS_VERSION="2.2.3"
+export SWEETS_VERSION="2.2.4"
 export SWEETS_DIR="${SWEETS_DIR:-$HOME/.sweet-scripts}"
 export SWEETS_CREDS_FILE="${SWEETS_CREDS_FILE:-$HOME/.sweets-credentials}"
 
@@ -1295,8 +1295,85 @@ sweets-update() {
             echo ""
         fi
         
+        # Check for local changes
+        local has_changes=false
+        local changed_files=""
+        if (cd "$dir" && git diff --quiet HEAD 2>/dev/null && git diff --cached --quiet 2>/dev/null); then
+            has_changes=false
+        else
+            has_changes=true
+            changed_files=$(cd "$dir" && git status --porcelain 2>/dev/null | head -5 | awk '{print $2}' | tr '\n' ' ' || echo "")
+        fi
+        
+        if [[ "$has_changes" == true ]]; then
+            echo -e "\033[33m[!] Local changes detected in SWEET-Scripts directory\033[0m"
+            echo ""
+            echo "Modified files: $changed_files"
+            echo ""
+            echo "Options:"
+            echo "  1) Stash changes and update (recommended - changes saved)"
+            echo "  2) Discard local changes and update (WARNING: changes will be lost)"
+            echo "  3) Cancel update"
+            echo ""
+            echo -n "Choose option (1/2/3): "
+            read -r change_option
+            
+            case "$change_option" in
+                1)
+                    echo ""
+                    echo "[*] Stashing local changes..."
+                    (cd "$dir" && git stash push -m "SWEET-Scripts update stash $(date +%Y%m%d_%H%M%S)" 2>/dev/null) || {
+                        echo -e "\033[31m[!] Failed to stash changes\033[0m"
+                        return 1
+                    }
+                    echo -e "\033[32m✓ Changes stashed (use 'git stash list' to see them)\033[0m"
+                    echo ""
+                    ;;
+                2)
+                    echo ""
+                    echo -e "\033[33m⚠ WARNING: This will discard all local changes!\033[0m"
+                    echo -n "Are you sure? (yes/no): "
+                    read -r confirm_discard
+                    if [[ "$confirm_discard" != "yes" ]]; then
+                        echo "Update cancelled."
+                        return 0
+                    fi
+                    echo ""
+                    echo "[*] Discarding local changes..."
+                    (cd "$dir" && git reset --hard HEAD 2>/dev/null && git clean -fd 2>/dev/null) || {
+                        echo -e "\033[31m[!] Failed to discard changes\033[0m"
+                        return 1
+                    }
+                    echo -e "\033[32m✓ Local changes discarded\033[0m"
+                    echo ""
+                    ;;
+                3|*)
+                    echo "Update cancelled."
+                    return 0
+                    ;;
+            esac
+        fi
+        
         echo "Updating SWEET-Scripts..."
-        (cd "$dir" && git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || git pull)
+        local pull_result
+        pull_result=$(cd "$dir" && git pull origin main 2>&1 || cd "$dir" && git pull origin master 2>&1 || cd "$dir" && git pull 2>&1)
+        local pull_exit=$?
+        
+        if [[ $pull_exit -ne 0 ]]; then
+            echo -e "\033[31m[!] Update failed\033[0m"
+            echo ""
+            echo "Error output:"
+            echo "$pull_result" | head -10
+            echo ""
+            echo -e "\033[33mTroubleshooting:\033[0m"
+            echo "  1. Check for merge conflicts manually:"
+            echo "     cd $dir && git status"
+            echo "  2. If you stashed changes, restore them with:"
+            echo "     cd $dir && git stash pop"
+            echo "  3. Or reset to remote version:"
+            echo "     cd $dir && git fetch && git reset --hard origin/main"
+            return 1
+        fi
         
         # Reload the script to get new version
         . "$dir/sweets.sh" 2>/dev/null || source "$dir/sweets.sh"
@@ -1306,6 +1383,13 @@ sweets-update() {
             echo -e "\033[32m✓ Successfully updated to v${SWEETS_VERSION}\033[0m"
         else
             echo -e "\033[32m✓ Update complete. Current version: v${SWEETS_VERSION}\033[0m"
+        fi
+        
+        if [[ "$has_changes" == true ]] && [[ "$change_option" == "1" ]]; then
+            echo ""
+            echo -e "\033[33mNote: Your local changes were stashed.\033[0m"
+            echo "  To view stashes: cd $dir && git stash list"
+            echo "  To restore: cd $dir && git stash pop"
         fi
     else
         echo -e "\033[33m[!] Git repo not found in $dir\033[0m"
