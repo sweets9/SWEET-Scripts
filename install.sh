@@ -103,9 +103,20 @@ PACKAGES_MANUAL=(
 show_banner() {
     # Try to get version from sweets.sh if available, otherwise use default
     local version="2.2.2"
-    if [[ -f "${SCRIPT_DIR}/sweets.sh" ]]; then
+    local sweets_file=""
+    
+    # Try multiple locations for sweets.sh
+    if [[ -n "$SCRIPT_DIR" ]] && [[ -f "${SCRIPT_DIR}/sweets.sh" ]]; then
+        sweets_file="${SCRIPT_DIR}/sweets.sh"
+    elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/sweets.sh" ]]; then
+        sweets_file="$(dirname "${BASH_SOURCE[0]}")/sweets.sh"
+    elif [[ -f "${INSTALL_DIR}/sweets.sh" ]]; then
+        sweets_file="${INSTALL_DIR}/sweets.sh"
+    fi
+    
+    if [[ -n "$sweets_file" ]] && [[ -f "$sweets_file" ]]; then
         local detected_version
-        detected_version=$(grep "^export SWEETS_VERSION=" "${SCRIPT_DIR}/sweets.sh" 2>/dev/null | head -1 | sed 's/export SWEETS_VERSION="\(.*\)"/\1/' || echo "")
+        detected_version=$(grep "^export SWEETS_VERSION=" "$sweets_file" 2>/dev/null | head -1 | sed 's/export SWEETS_VERSION="\(.*\)"/\1/' || echo "")
         [[ -n "$detected_version" ]] && version="$detected_version"
     fi
     
