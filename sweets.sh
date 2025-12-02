@@ -2,7 +2,7 @@
 # =============================================================================
 # SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
 # =============================================================================
-# Version: 2.0.0
+# Version: 2.1.0
 # Repository: https://github.com/sweets9/SWEET-Scripts
 # License: MIT
 # 
@@ -34,7 +34,7 @@
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-export SWEETS_VERSION="2.0.0"
+export SWEETS_VERSION="2.1.0"
 export SWEETS_DIR="${SWEETS_DIR:-$HOME/.sweet-scripts}"
 export SWEETS_CREDS_FILE="${SWEETS_CREDS_FILE:-$HOME/.sweets-credentials}"
 
@@ -1334,7 +1334,7 @@ SSH:      sshimport <user> [target]  - Import GitHub keys to authorized_keys
 NETWORK:
   myip, myip6   Public IP              localip, ips  Local IPs
   ports         All ports              listening     Open ports
-  connections   Active connections     dig, ns       DNS lookup
+  connections   Active connections
   rdns          Reverse DNS            pingg, pingd  Quick ping tests
   headers       HTTP headers           httpcode      HTTP status code
 
@@ -1366,7 +1366,7 @@ EOF
 
 sweets-keys() {
     cat << 'EOF'
-Keyboard Shortcuts:
+Terminal Keyboard Shortcuts:
   Ctrl+A        Start of line       Ctrl+E        End of line
   Ctrl+W        Delete word back    Ctrl+U        Delete to start
   Alt+B         Word back           Alt+F         Word forward
@@ -1809,8 +1809,7 @@ sweets-menu() {
         echo ""
         echo -e "\033[33m  NETWORK\033[0m"
         echo "  7) Show IP addresses"
-        echo "  8) Show open ports"
-        echo "  9) DNS lookup"
+        echo "  8) Show open ports (listening)"
         echo ""
         echo -e "\033[33m  TOOLS\033[0m"
         echo "  10) Setup Tailscale"
@@ -1959,6 +1958,17 @@ sweets-menu() {
                 echo ""
                 sweets-list-creds
                 echo ""
+                echo -e "\033[1mHow to use credentials:${NC}"
+                echo "  Credentials are stored as environment variables in:"
+                echo "  $SWEETS_CREDS_FILE"
+                echo ""
+                echo "  They are automatically loaded when you start a new shell."
+                echo "  Access them with: \${CRED_NAME}"
+                echo ""
+                echo "  Example:"
+                echo "    sweets-add-cred API_KEY"
+                echo "    # Then use: echo \$API_KEY"
+                echo ""
                 echo -e "\033[33mPress Enter to continue...\033[0m"
                 read -r
                 ;;
@@ -1992,27 +2002,11 @@ sweets-menu() {
                 ;;
             8)
                 clear
-                echo -e "\033[36m\033[1m=== Open Ports ===\033[0m"
+                echo -e "\033[36m\033[1m=== Listening Ports and Processes ===\033[0m"
                 echo ""
-                ss -tulanp 2>/dev/null | head -30 || netstat -tulanp 2>/dev/null | head -30 || echo "No network tools available"
+                echo "Listening ports with processes:"
                 echo ""
-                echo -e "\033[33mPress Enter to continue...\033[0m"
-                read -r
-                ;;
-            9)
-                clear
-                echo -e "\033[36m\033[1m=== DNS Lookup ===\033[0m"
-                echo ""
-                echo -n "Enter hostname: "
-                read -r hostname
-                if [[ -n "$hostname" ]]; then
-                    echo ""
-                    echo -e "\033[1mA Record:\033[0m"
-                    dig +short "$hostname" 2>/dev/null || nslookup "$hostname" 2>/dev/null || host "$hostname" 2>/dev/null || echo "No DNS tools available"
-                    echo ""
-                    echo -e "\033[1mMX Record:\033[0m"
-                    dig +short MX "$hostname" 2>/dev/null || echo "N/A"
-                fi
+                (ss -tulnp 2>/dev/null || netstat -tulnp 2>/dev/null) | grep LISTEN || echo "No network tools available"
                 echo ""
                 echo -e "\033[33mPress Enter to continue...\033[0m"
                 read -r
@@ -2150,6 +2144,14 @@ sweets-menu() {
                 local install_script="${SWEETS_DIR:-$HOME/.sweet-scripts}/install.sh"
                 if [[ -f "$install_script" ]]; then
                     bash "$install_script" --show-packages
+                    echo ""
+                    echo -e "\033[1mInstall missing packages?${NC} (y/N): "
+                    read -r install_choice
+                    if [[ "$install_choice" =~ ^[Yy]$ ]]; then
+                        echo ""
+                        echo "Installing dependencies..."
+                        bash "$install_script" --skip-zsh
+                    fi
                 else
                     echo "Install script not found."
                 fi

@@ -35,6 +35,7 @@ PACKAGES_CORE=(
     "zsh:zsh:zsh:Z Shell:Recommended"
     "jq:jq:jq:JSON processor:Recommended"
     "htop:htop:htop:Process viewer:Recommended"
+    "btop:btop:btop:Modern process viewer:Recommended"
 )
 
 PACKAGES_ARCHIVE=(
@@ -294,6 +295,17 @@ install_dependencies() {
     esac
 
     echo -e "${GREEN}[+]${NC} Dependencies installed!"
+    
+    # Show what was installed
+    echo ""
+    echo -e "${CYAN}Installed packages:${NC}"
+    echo "  Core: $core_pkgs"
+    echo "  Archive: $archive_pkgs"
+    echo "  Network: $net_pkgs"
+    echo "  Dev: $dev_pkgs"
+    if [[ -n "$WAYLAND_DISPLAY" ]] || [[ -n "$DISPLAY" ]]; then
+        echo "  Clipboard: $([ -n "$WAYLAND_DISPLAY" ] && echo "wl-clipboard" || echo "xclip")"
+    fi
 }
 
 # Install Docker CE and Compose v2
@@ -509,16 +521,6 @@ install_scripts() {
 configure_shells() {
     echo -e "\n${CYAN}=== Configuring Shell Integration ===${NC}\n"
 
-    # Source block to add to rc files
-    SOURCE_BLOCK="$MARKER
-# SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
-# https://github.com/sweets9/SWEET-Scripts
-export SWEETS_DIR=\"$INSTALL_DIR\"
-if [[ -f \"\$SWEETS_DIR/sweets.sh\" ]]; then
-    source \"\$SWEETS_DIR/sweets.sh\"
-fi
-$END_MARKER"
-
     # Function to install to rc file
     install_to_rc() {
         local rc_file="$1"
@@ -537,7 +539,19 @@ $END_MARKER"
             mv "$tmpfile" "$rc_file"
         fi
         
-        echo -e "\n$SOURCE_BLOCK" >> "$rc_file"
+        # Append source block using cat with heredoc to avoid quoting issues
+        {
+            echo ""
+            echo "$MARKER"
+            echo "# SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions"
+            echo "# https://github.com/sweets9/SWEET-Scripts"
+            echo "export SWEETS_DIR=\"$INSTALL_DIR\""
+            echo "if [[ -f \"\$SWEETS_DIR/sweets.sh\" ]]; then"
+            echo "    source \"\$SWEETS_DIR/sweets.sh\""
+            echo "fi"
+            echo "$END_MARKER"
+        } >> "$rc_file"
+        
         echo -e "${GREEN}[+]${NC} Installed to $rc_file ($shell_name)"
     }
 
@@ -664,7 +678,7 @@ main() {
         # Check if dependencies should be installed
         if [[ "$SKIP_DEPS" == false ]]; then
             echo -e "${YELLOW}1. Install dependencies?${NC}"
-            echo "   Packages: git, zsh, tmux, vim, tree, jq, htop, and more"
+            echo "   Packages: git, zsh, tmux, vim, tree, jq, htop, btop, and more"
             echo -n "   Install dependencies? (Y/n): "
             set +e
             read -r deps_choice
@@ -848,9 +862,9 @@ main() {
         echo -e "${GREEN}✓${NC} SWEET-Scripts activated!"
         echo ""
         echo "Quick commands:"
+        echo "  sweets           Interactive menu (recommended!)"
         echo "  sweets-help      Show all available commands"
         echo "  sweets-update    Update to latest version"
-        echo "  sweets           Interactive menu"
         echo ""
     else
         echo -e "${YELLOW}To activate now:${NC}"
