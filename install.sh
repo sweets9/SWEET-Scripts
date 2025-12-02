@@ -740,17 +740,18 @@ configure_shells() {
         fi
         
         # Append source block using cat with heredoc to avoid quoting issues
-        {
-            echo ""
-            echo "$MARKER"
-            echo "# SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions"
-            echo "# https://github.com/sweets9/SWEET-Scripts"
-            echo "export SWEETS_DIR=\"$INSTALL_DIR\""
-            echo "if [[ -f \"\$SWEETS_DIR/sweets.sh\" ]]; then"
-            echo "    source \"\$SWEETS_DIR/sweets.sh\""
-            echo "fi"
-            echo "$END_MARKER"
-        } >> "$rc_file"
+        # Use a heredoc with quoted delimiter to prevent variable expansion issues
+        cat >> "$rc_file" << EOF
+
+$MARKER
+# SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
+# https://github.com/sweets9/SWEET-Scripts
+export SWEETS_DIR="$INSTALL_DIR"
+if [[ -f "\$SWEETS_DIR/sweets.sh" ]]; then
+    source "\$SWEETS_DIR/sweets.sh"
+fi
+$END_MARKER
+EOF
         
         echo -e "${GREEN}[+]${NC} Installed to $rc_file ($shell_name)"
     }
