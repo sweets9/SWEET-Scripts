@@ -2,7 +2,7 @@
 # =============================================================================
 # SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
 # =============================================================================
-# Version: 2.2.9
+# Version: 2.3.0
 # Repository: https://github.com/sweets9/SWEET-Scripts
 # License: MIT
 # 
@@ -34,7 +34,7 @@
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-export SWEETS_VERSION="2.2.9"
+export SWEETS_VERSION="2.3.0"
 export SWEETS_DIR="${SWEETS_DIR:-$HOME/.sweet-scripts}"
 export SWEETS_CREDS_FILE="${SWEETS_CREDS_FILE:-$HOME/.sweets-credentials}"
 
@@ -1297,19 +1297,21 @@ sweets-update() {
             echo ""
             
             if [[ "$remote_version" == "$current_version" ]]; then
-                echo -e "\033[32m✓ You are already on the latest version!\033[0m"
-                return 0
+                echo -e "\033[33mCurrent version matches remote (v${current_version})\033[0m"
+                echo -e "\033[33mProceeding with force update...\033[0m"
+                echo ""
             else
                 echo -e "\033[33mUpdate available: v${current_version} → v${remote_version}\033[0m"
                 echo ""
-                echo -n "Proceed with update? (Y/n): "
-                read -r confirm
-                if [[ "$confirm" =~ ^[Nn]$ ]]; then
-                    echo "Update cancelled."
-                    return 0
-                fi
-                echo ""
             fi
+            
+            echo -n "Proceed with update? (Y/n): "
+            read -r confirm
+            if [[ "$confirm" =~ ^[Nn]$ ]]; then
+                echo "Update cancelled."
+                return 0
+            fi
+            echo ""
         else
             echo -e "\033[33m[!] Could not determine remote version. Proceeding with update...\033[0m"
             echo ""
