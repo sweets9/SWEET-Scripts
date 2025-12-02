@@ -212,6 +212,206 @@ _build_pkg_list() {
     echo "$result"
 }
 
+# Install individual package by name
+install_package() {
+    local pkg_name="$1"
+    local found=false
+    local pkg_to_install=""
+    
+    # Search through all package arrays
+    for pkg in "${PACKAGES_CORE[@]}" "${PACKAGES_ARCHIVE[@]}" "${PACKAGES_NET[@]}" "${PACKAGES_DEV[@]}" "${PACKAGES_MODERN[@]}" "${PACKAGES_CLIPBOARD[@]}"; do
+        IFS=':' read -r name apt_pkg dnf_pkg desc notes <<< "$pkg"
+        if [[ "$name" == "$pkg_name" ]] || [[ "$apt_pkg" == "$pkg_name" ]] || [[ "$dnf_pkg" == "$pkg_name" ]]; then
+            found=true
+            if [[ "$DISTRO_TYPE" == "rhel" ]]; then
+                pkg_to_install="$dnf_pkg"
+            else
+                pkg_to_install="$apt_pkg"
+            fi
+            
+            # Handle special cases
+            if [[ "$pkg_to_install" == "@"* ]]; then
+                # Group install (e.g., @development-tools)
+                local group_name="${pkg_to_install#@}"
+                case "$PKG_MANAGER" in
+                    dnf)
+                        echo "[*] Installing group: $group_name"
+                        sudo dnf groupinstall -y "$group_name" 2>/dev/null || true
+                        ;;
+                    yum)
+                        sudo yum groupinstall -y "$group_name" 2>/dev/null || true
+                        ;;
+                    *)
+                        echo "[!] Group install not supported for $PKG_MANAGER"
+                        return 1
+                        ;;
+                esac
+                return 0
+            elif [[ "$pkg_to_install" == "-" ]]; then
+                echo "[!] Package $pkg_name not available for this distribution"
+                return 1
+            fi
+            
+            break
+        fi
+    done
+    
+    if [[ "$found" == false ]]; then
+        echo "[!] Package '$pkg_name' not found in package list"
+        return 1
+    fi
+    
+    if [[ -z "$pkg_to_install" ]]; then
+        echo "[!] Package '$pkg_name' not available for this distribution"
+        return 1
+    fi
+    
+    # Install the package
+    echo "[*] Installing $pkg_to_install..."
+    case "$PKG_MANAGER" in
+        apt)
+            sudo apt update 2>/dev/null || true
+            sudo apt install -y "$pkg_to_install" 2>/dev/null || {
+                echo "[!] Failed to install $pkg_to_install"
+                return 1
+            }
+            ;;
+        dnf)
+            sudo dnf install -y "$pkg_to_install" 2>/dev/null || {
+                echo "[!] Failed to install $pkg_to_install"
+                return 1
+            }
+            ;;
+        yum)
+            sudo yum install -y "$pkg_to_install" 2>/dev/null || {
+                echo "[!] Failed to install $pkg_to_install"
+                return 1
+            }
+            ;;
+        *)
+            echo "[!] Unknown package manager"
+            return 1
+            ;;
+    esac
+    
+    echo "[+] Successfully installed $pkg_to_install"
+    return 0
+}
+
+# Interactive package installer
+install_packages_interactive() {
+    detect_distro
+    
+    echo -e "\n${CYAN}${BOLD}=== Interactive Package Installation ===${NC}\n"
+    
+    # Build list of all packages with numbers
+    local all_packages=()
+    local index=1
+    
+    echo -e "${BOLD}Available packages:${NC}\n"
+    
+    # Core packages
+    echo -e "${YELLOW}Core Packages:${NC}"
+    for pkg in "${PACKAGES_CORE[@]}"; do
+        IFS=':' read -r name apt_pkg dnf_pkg desc notes <<< "$pkg"
+        local pkg_name="$apt_pkg"
+        [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
+        local status
+        if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
+            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            all_packages+=("$name")
+            index=$((index + 1))
+        fi
+    done
+    
+    # Archive packages
+    echo -e "\n${YELLOW}Archive Tools:${NC}"
+    for pkg in "${PACKAGES_ARCHIVE[@]}"; do
+        IFS=':' read -r name apt_pkg dnf_pkg desc notes <<< "$pkg"
+        local pkg_name="$apt_pkg"
+        [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
+        local status
+        if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
+            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            all_packages+=("$name")
+            index=$((index + 1))
+        fi
+    done
+    
+    # Network packages
+    echo -e "\n${YELLOW}Network Tools:${NC}"
+    for pkg in "${PACKAGES_NET[@]}"; do
+        IFS=':' read -r name apt_pkg dnf_pkg desc notes <<< "$pkg"
+        local pkg_name="$apt_pkg"
+        [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
+        local status
+        if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
+            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            all_packages+=("$name")
+            index=$((index + 1))
+        fi
+    done
+    
+    # Dev packages
+    echo -e "\n${YELLOW}Dev Tools:${NC}"
+    for pkg in "${PACKAGES_DEV[@]}"; do
+        IFS=':' read -r name apt_pkg dnf_pkg desc notes <<< "$pkg"
+        local pkg_name="$apt_pkg"
+        [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
+        local status
+        if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
+            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            all_packages+=("$name")
+            index=$((index + 1))
+        fi
+    done
+    
+    # Modern CLI packages
+    echo -e "\n${YELLOW}Modern CLI:${NC}"
+    for pkg in "${PACKAGES_MODERN[@]}"; do
+        IFS=':' read -r name apt_pkg dnf_pkg desc notes <<< "$pkg"
+        local pkg_name="$apt_pkg"
+        [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
+        local status
+        if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
+            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            all_packages+=("$name")
+            index=$((index + 1))
+        fi
+    done
+    
+    echo ""
+    echo -e "${BOLD}Enter package numbers to install (space-separated, e.g., '1 3 5' or 'all' for all):${NC}"
+    echo -n "> "
+    read -r selection
+    
+    if [[ "$selection" == "all" ]] || [[ "$selection" == "ALL" ]]; then
+        echo ""
+        echo "[*] Installing all packages..."
+        for pkg_name in "${all_packages[@]}"; do
+            install_package "$pkg_name" || true
+        done
+    else
+        # Parse numbers
+        for num in $selection; do
+            if [[ "$num" =~ ^[0-9]+$ ]] && [[ "$num" -ge 1 ]] && [[ "$num" -le ${#all_packages[@]} ]]; then
+                local pkg_name="${all_packages[$((num - 1))]}"
+                install_package "$pkg_name"
+            else
+                echo "[!] Invalid selection: $num"
+            fi
+        done
+    fi
+    
+    echo ""
+    echo "[+] Package installation complete!"
+}
+
 # Install dependencies
 install_dependencies() {
     echo -e "\n${CYAN}${BOLD}=== Installing Dependencies ===${NC}\n"
@@ -643,6 +843,11 @@ main() {
             --show-packages|--packages)
                 detect_distro
                 show_packages
+                exit 0
+                ;;
+            --install-packages|--install-pkg)
+                detect_distro
+                install_packages_interactive
                 exit 0
                 ;;
             --help|-h)
