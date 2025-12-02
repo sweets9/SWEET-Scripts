@@ -1809,7 +1809,7 @@ sweets-security-setup() {
     sudo sed -i 's/^max_log_file_action = .*/max_log_file_action = ROTATE/' /etc/audit/auditd.conf 2>/dev/null || true
     sudo sed -i 's/^num_logs = .*/num_logs = 5/' /etc/audit/auditd.conf 2>/dev/null || true
     
-    # Configure audit rules (CIS Benchmark inspired)
+    # Configure audit rules
     echo "[*] Configuring audit rules..."
     
     # Backup existing rules
@@ -1817,85 +1817,67 @@ sweets-security-setup() {
         sudo cp /etc/audit/rules.d/audit.rules /etc/audit/rules.d/audit.rules.backup.$(date +%Y%m%d) 2>/dev/null || true
     fi
     
-    # Add comprehensive audit rules
-    {
-        echo "# SWEET-Scripts Security Hardening - Audit Rules"
-        echo "# Based on CIS Benchmark recommendations"
-        echo ""
-        echo "# Delete all existing rules"
-        echo "-D"
-        echo ""
-        echo "# Buffer size"
-        echo "-b 8192"
-        echo ""
-        echo "# Failure mode"
-        echo "-f 1"
-        echo ""
-        echo "# System call auditing"
-        echo "-a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change"
-        echo "-a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change"
-        echo "-a always,exit -F arch=b64 -S clock_settime -k time-change"
-        echo "-a always,exit -F arch=b32 -S clock_settime -k time-change"
-        echo "-w /etc/localtime -p wa -k time-change"
-        echo ""
-        echo "# User and group changes"
-        echo "-w /etc/group -p wa -k identity"
-        echo "-w /etc/passwd -p wa -k identity"
-        echo "-w /etc/gshadow -p wa -k identity"
-        echo "-w /etc/shadow -p wa -k identity"
-        echo "-w /etc/security/opasswd -p wa -k identity"
-        echo ""
-        echo "# Network configuration"
-        echo "-a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale"
-        echo "-a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale"
-        echo "-w /etc/issue -p wa -k system-locale"
-        echo "-w /etc/issue.net -p wa -k system-locale"
-        echo "-w /etc/hosts -p wa -k system-locale"
-        echo "-w /etc/sysconfig/network -p wa -k system-locale"
-        echo ""
-        echo "# Login/logout"
-        echo "-w /var/log/faillog -p wa -k logins"
-        echo "-w /var/log/lastlog -p wa -k logins"
-        echo "-w /var/log/tallylog -p wa -k logins"
-        echo ""
-        echo "# Session initiation"
-        echo "-w /var/run/utmp -p wa -k session"
-        echo "-w /var/log/wtmp -p wa -k session"
-        echo "-w /var/log/btmp -p wa -k session"
-        echo ""
-        echo "# Discretionary access control"
-        echo "-a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod"
-        echo "-a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod"
-        echo "-a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod"
-        echo "-a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod"
-        echo "-a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod"
-        echo "-a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod"
-        echo ""
-        echo "# Unauthorized access attempts"
-        echo "-a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access"
-        echo "-a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access"
-        echo "-a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access"
-        echo "-a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access"
-        echo ""
-        echo "# Privileged commands"
-        echo "-a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts"
-        echo "-a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts"
-        echo "-a always,exit -F arch=b64 -S unshare -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k unshare"
-        echo "-a always,exit -F arch=b32 -S unshare -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k unshare"
-        echo ""
-        echo "# File deletion"
-        echo "-a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete"
-        echo "-a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete"
-        echo ""
-        echo "# Module loading"
-        echo "-w /sbin/insmod -p x -k modules"
-        echo "-w /sbin/rmmod -p x -k modules"
-        echo "-w /sbin/modprobe -p x -k modules"
-        echo "-a always,exit -F arch=b64 -S init_module -S delete_module -k modules"
-        echo ""
-        echo "# Make configuration immutable (uncomment to enable)"
-        echo "# -e 2"
-    } | sudo tee /etc/audit/rules.d/audit.rules >/dev/null
+    # Ask user which version to use
+    echo ""
+    echo "Audit rules source:"
+    echo "  1) Use local version (from SWEET-Scripts repo)"
+    echo "  2) Pull latest from Neo23x0/auditd (recommended)"
+    echo ""
+    echo -n "Select option [2]: "
+    read -r rules_choice
+    rules_choice="${rules_choice:-2}"
+    
+    local rules_file=""
+    if [[ "$rules_choice" == "1" ]]; then
+        # Use local version from SWEET-Scripts
+        local local_rules="${SWEETS_DIR:-$HOME/.sweet-scripts}/audit.rules"
+        if [[ -f "$local_rules" ]]; then
+            rules_file="$local_rules"
+            echo "[*] Using local audit.rules from SWEET-Scripts"
+        else
+            echo "[!] Local audit.rules not found, falling back to remote version"
+            rules_choice="2"
+        fi
+    fi
+    
+    if [[ "$rules_choice" == "2" ]] || [[ -z "$rules_file" ]]; then
+        # Pull latest from Neo23x0
+        echo "[*] Downloading latest audit.rules from Neo23x0/auditd..."
+        local temp_rules=$(mktemp)
+        if curl -fsSL https://raw.githubusercontent.com/Neo23x0/auditd/master/audit.rules -o "$temp_rules" 2>/dev/null; then
+            rules_file="$temp_rules"
+            echo "[+] Downloaded latest audit.rules from Neo23x0"
+        else
+            echo "[!] Failed to download from Neo23x0, trying local version..."
+            local local_rules="${SWEETS_DIR:-$HOME/.sweet-scripts}/audit.rules"
+            if [[ -f "$local_rules" ]]; then
+                rules_file="$local_rules"
+                echo "[*] Using local audit.rules as fallback"
+            else
+                echo "[!] No audit rules available. Using basic configuration."
+                rules_file=""
+            fi
+        fi
+    fi
+    
+    if [[ -n "$rules_file" ]] && [[ -f "$rules_file" ]]; then
+        # Copy rules file to audit directory
+        sudo cp "$rules_file" /etc/audit/rules.d/audit.rules
+        sudo chmod 640 /etc/audit/rules.d/audit.rules
+        echo "[+] Audit rules installed from: $([ "$rules_choice" == "1" ] && echo "local" || echo "Neo23x0/auditd")"
+        
+        # Clean up temp file if used
+        [[ "$rules_file" =~ ^/tmp/ ]] && rm -f "$rules_file" 2>/dev/null || true
+    else
+        echo "[!] Using basic audit configuration"
+        # Fallback to basic rules
+        {
+            echo "# Basic audit rules (fallback)"
+            echo "-D"
+            echo "-b 8192"
+            echo "-f 1"
+        } | sudo tee /etc/audit/rules.d/audit.rules >/dev/null
+    fi
     
     # Enable and start services
     echo "[*] Enabling services..."
