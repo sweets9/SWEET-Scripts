@@ -63,20 +63,51 @@ export SWEETS_DISTRO="$(_sweets_detect_distro)"
 
 # Detect LXC container
 _sweets_detect_lxc() {
-    # Check for LXC container markers
+    # Check for LXC container markers (multiple methods for reliability)
     if [[ -f /.dockerenv ]]; then
         return 1  # Docker, not LXC
-    elif [[ -n "$container" ]] && [[ "$container" == "lxc" ]]; then
-        return 0  # LXC detected via environment variable
-    elif grep -qa container=lxc /proc/1/environ 2>/dev/null; then
-        return 0  # LXC detected in process environment
-    elif [[ -d /dev/.lxc ]]; then
-        return 0  # LXC device directory exists
-    elif [[ -f /.lxc-boot-id ]]; then
-        return 0  # LXC boot ID file
-    else
-        return 1  # Not LXC
     fi
+    
+    # Method 1: Environment variable
+    if [[ -n "$container" ]] && [[ "$container" == "lxc" ]]; then
+        return 0
+    fi
+    
+    # Method 2: Process environment
+    if grep -qa container=lxc /proc/1/environ 2>/dev/null; then
+        return 0
+    fi
+    
+    # Method 3: LXC device directory
+    if [[ -d /dev/.lxc ]]; then
+        return 0
+    fi
+    
+    # Method 4: LXC boot ID file
+    if [[ -f /.lxc-boot-id ]]; then
+        return 0
+    fi
+    
+    # Method 5: Check cgroup for lxc
+    if grep -q lxc /proc/self/cgroup 2>/dev/null; then
+        return 0
+    fi
+    
+    # Method 6: systemd-detect-virt (if available)
+    if command -v systemd-detect-virt &>/dev/null; then
+        local virt_type
+        virt_type=$(systemd-detect-virt 2>/dev/null)
+        if [[ "$virt_type" == "lxc" ]] || [[ "$virt_type" == "systemd-nspawn" ]]; then
+            return 0
+        fi
+    fi
+    
+    # Method 7: Check for LXC in /proc/version or uname
+    if grep -qi lxc /proc/version 2>/dev/null; then
+        return 0
+    fi
+    
+    return 1  # Not LXC
 }
 
 # =============================================================================
@@ -2368,6 +2399,15 @@ sweets-syslog-setup() {
             ;;
         4)
             # Auditd forwarding
+            # Check if running in LXC (auditd doesn't work in LXC)
+            if _sweets_detect_lxc; then
+                echo -e "\033[33m[!] LXC container detected\033[0m"
+                echo "[!] auditd is not supported in LXC containers"
+                echo "[!] Skipping auditd installation"
+                echo ""
+                return 0
+            fi
+            
             if ! command -v auditd &>/dev/null && ! systemctl list-unit-files 2>/dev/null | grep -q auditd; then
                 echo "[!] Installing auditd..."
                 case "$SWEETS_DISTRO" in
