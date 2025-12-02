@@ -390,7 +390,8 @@ elif [[ "$SWEETS_CONTAINER_RUNTIME" == "docker" ]]; then
     alias dtop='docker top'
     alias dstats='docker stats'
     
-    # Enhanced Docker functions
+    # Enhanced Docker functions (unalias first to avoid conflicts)
+    unalias dlogs 2>/dev/null || true
     dlogs() {
         if [[ -n "$1" ]]; then
             docker logs -f "$1"
@@ -400,6 +401,7 @@ elif [[ "$SWEETS_CONTAINER_RUNTIME" == "docker" ]]; then
         fi
     }
     
+    unalias dstart 2>/dev/null || true
     dstart() {
         if [[ -n "$1" ]]; then
             docker start "$1"
@@ -3153,8 +3155,15 @@ alias sweet-update='sweets-update'
 if [[ "$SWEETS_SHELL" == "zsh" ]]; then
     # ZSH completions
     autoload -Uz compinit
-    if [[ -n ${ZDOTDIR}/.zcompdump(#qN.mh+24) ]]; then
-        compinit
+    # Check if zcompdump is older than 24 hours (portable check)
+    local zcompdump_file="${ZDOTDIR:-$HOME}/.zcompdump"
+    if [[ -f "$zcompdump_file" ]]; then
+        # Check if file is older than 24 hours using find (works in both bash and zsh)
+        if find "$zcompdump_file" -mtime +1 -print 2>/dev/null | grep -q .; then
+            compinit
+        else
+            compinit -C
+        fi
     else
         compinit -C
     fi
