@@ -391,36 +391,51 @@ alias dex='docker exec -it'
     alias dstats='docker stats'
     
     # Enhanced Docker functions (remove any existing alias/function first)
-    # In zsh, we need to remove aliases before defining functions
+    # In zsh, aliases are expanded during parsing, so we need to use eval or functions command
     if [[ -n "$ZSH_VERSION" ]]; then
-        # zsh-specific: remove alias and function
+        # zsh-specific: remove alias and function, then define using functions command
         unalias dlogs 2>/dev/null || true
         unfunction dlogs 2>/dev/null || true
         unalias dstart 2>/dev/null || true
         unfunction dstart 2>/dev/null || true
-    else
-        # bash: just unalias
-        unalias dlogs 2>/dev/null || true
-        unalias dstart 2>/dev/null || true
-    fi
-    
-    dlogs() {
-        if [[ -n "$1" ]]; then
+        
+        # Define functions using zsh functions command to avoid alias expansion issues
+        functions[dlogs]='if [[ -n "$1" ]]; then
             docker logs -f "$1"
         else
             echo "Usage: dlogs <container-name>"
             docker ps
-        fi
-    }
-    
-    dstart() {
-        if [[ -n "$1" ]]; then
+        fi'
+        
+        functions[dstart]='if [[ -n "$1" ]]; then
             docker start "$1"
         else
             echo "Usage: dstart <container-name>"
             docker ps -a
-        fi
-    }
+        fi'
+    else
+        # bash: just unalias, then define normally
+        unalias dlogs 2>/dev/null || true
+        unalias dstart 2>/dev/null || true
+        
+        dlogs() {
+            if [[ -n "$1" ]]; then
+                docker logs -f "$1"
+            else
+                echo "Usage: dlogs <container-name>"
+                docker ps
+            fi
+        }
+        
+        dstart() {
+            if [[ -n "$1" ]]; then
+                docker start "$1"
+            else
+                echo "Usage: dstart <container-name>"
+                docker ps -a
+            fi
+        }
+    fi
     
     dstop() {
         if [[ -n "$1" ]]; then
