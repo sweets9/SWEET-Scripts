@@ -2,7 +2,7 @@
 # =============================================================================
 # SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
 # =============================================================================
-# Version: 2.2.4
+# Version: 2.2.5
 # Repository: https://github.com/sweets9/SWEET-Scripts
 # License: MIT
 # 
@@ -34,7 +34,7 @@
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-export SWEETS_VERSION="2.2.4"
+export SWEETS_VERSION="2.2.5"
 export SWEETS_DIR="${SWEETS_DIR:-$HOME/.sweet-scripts}"
 export SWEETS_CREDS_FILE="${SWEETS_CREDS_FILE:-$HOME/.sweets-credentials}"
 
@@ -1546,6 +1546,342 @@ sweets-docker-uninstall() {
     echo ""
 }
 
+# System diagnostics function
+sweets-system-diagnostics() {
+    echo -e "\033[36m\033[1m=== System Diagnostics & Logs ===\033[0m"
+    echo ""
+    
+    echo -e "\033[1mSystem Information:\033[0m"
+    echo "  Hostname: $(hostname 2>/dev/null || echo 'N/A')"
+    echo "  Uptime: $(uptime -p 2>/dev/null || uptime 2>/dev/null | awk -F'up ' '{print $2}' | awk -F',' '{print $1}' || echo 'N/A')"
+    echo "  Kernel: $(uname -r 2>/dev/null || echo 'N/A')"
+    echo "  Architecture: $(uname -m 2>/dev/null || echo 'N/A')"
+    echo "  OS: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2 || echo 'N/A')"
+    echo ""
+    
+    echo -e "\033[1mMemory Usage:\033[0m"
+    if command -v free &>/dev/null; then
+        free -h 2>/dev/null | head -2
+    else
+        echo "  free command not available"
+    fi
+    echo ""
+    
+    echo -e "\033[1mDisk Usage:\033[0m"
+    if command -v df &>/dev/null; then
+        df -h / 2>/dev/null | tail -1
+    else
+        echo "  df command not available"
+    fi
+    echo ""
+    
+    echo -e "\033[1mRecent System Logs (last 10 lines):\033[0m"
+    if command -v journalctl &>/dev/null; then
+        echo "  Systemd journal (last 10 entries):"
+        sudo journalctl -n 10 --no-pager 2>/dev/null | tail -10 || echo "  (requires sudo)"
+    elif [[ -f /var/log/syslog ]]; then
+        echo "  /var/log/syslog (last 10 lines):"
+        sudo tail -10 /var/log/syslog 2>/dev/null || echo "  (requires sudo)"
+    elif [[ -f /var/log/messages ]]; then
+        echo "  /var/log/messages (last 10 lines):"
+        sudo tail -10 /var/log/messages 2>/dev/null || echo "  (requires sudo)"
+    else
+        echo "  No system logs found"
+    fi
+    echo ""
+    
+    echo -e "\033[1mFailed Services:\033[0m"
+    if command -v systemctl &>/dev/null; then
+        local failed_count
+        failed_count=$(systemctl --failed --no-legend 2>/dev/null | wc -l)
+        if [[ "$failed_count" -gt 0 ]]; then
+            echo -e "  ${RED}✗${NC} $failed_count failed service(s):"
+            systemctl --failed --no-legend 2>/dev/null | head -5 | awk '{print "    - " $1}'
+        else
+            echo -e "  ${GREEN}✓${NC} No failed services"
+        fi
+    else
+        echo "  systemctl not available"
+    fi
+    echo ""
+    
+    echo -e "\033[1mRecent Errors in Logs:\033[0m"
+    if command -v journalctl &>/dev/null; then
+        echo "  Searching for errors (last 5):"
+        sudo journalctl -p err -n 5 --no-pager 2>/dev/null | tail -5 || echo "  (requires sudo)"
+    else
+        echo "  journalctl not available"
+    fi
+    echo ""
+    
+    echo "Options:"
+    echo "  1) View full system log (journalctl -f)"
+    echo "  2) View auth log"
+    echo "  3) View kernel messages (dmesg)"
+    echo "  4) Show all failed services"
+    echo "  5) Back"
+    echo ""
+    echo -n "Select option: "
+    read -r log_choice
+    
+    case "$log_choice" in
+        1)
+            echo ""
+            echo "Press Ctrl+C to exit log viewer"
+            sleep 2
+            sudo journalctl -f 2>/dev/null || echo "journalctl not available or requires sudo"
+            ;;
+        2)
+            echo ""
+            if [[ -f /var/log/auth.log ]]; then
+                sudo tail -50 /var/log/auth.log 2>/dev/null || echo "Requires sudo"
+            elif [[ -f /var/log/secure ]]; then
+                sudo tail -50 /var/log/secure 2>/dev/null || echo "Requires sudo"
+            else
+                echo "Auth log not found"
+            fi
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        3)
+            echo ""
+            sudo dmesg -T | tail -50 2>/dev/null || dmesg | tail -50
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        4)
+            echo ""
+            if command -v systemctl &>/dev/null; then
+                systemctl --failed --no-pager 2>/dev/null || echo "Requires sudo"
+            else
+                echo "systemctl not available"
+            fi
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        5|*)
+            ;;
+    esac
+}
+
+# Service status function
+sweets-service-status() {
+    echo -e "\033[36m\033[1m=== Service Status & Failed Services ===\033[0m"
+    echo ""
+    
+    if ! command -v systemctl &>/dev/null; then
+        echo -e "\033[33m[!] systemctl not available on this system\033[0m"
+        echo ""
+        echo -e "\033[33mPress Enter to continue...\033[0m"
+        read -r
+        return
+    fi
+    
+    echo -e "\033[1mFailed Services:\033[0m"
+    local failed_services
+    failed_services=$(systemctl --failed --no-legend 2>/dev/null)
+    if [[ -n "$failed_services" ]]; then
+        echo "$failed_services" | while read -r line; do
+            echo -e "  ${RED}✗${NC} $line"
+        done
+    else
+        echo -e "  ${GREEN}✓${NC} No failed services"
+    fi
+    echo ""
+    
+    echo -e "\033[1mKey Services Status:\033[0m"
+    local services=("docker" "ssh" "network" "systemd-resolved" "dbus")
+    for svc in "${services[@]}"; do
+        if systemctl list-unit-files 2>/dev/null | grep -q "^${svc}"; then
+            if systemctl is-active --quiet "${svc}" 2>/dev/null; then
+                echo -e "  ${GREEN}✓${NC} $svc - Running"
+            elif systemctl is-enabled --quiet "${svc}" 2>/dev/null; then
+                echo -e "  ${YELLOW}⚠${NC} $svc - Enabled but not running"
+            else
+                echo -e "  ${RED}✗${NC} $svc - Not active"
+            fi
+        fi
+    done
+    echo ""
+    
+    echo "Options:"
+    echo "  1) Check specific service status"
+    echo "  2) Restart a service"
+    echo "  3) View all services"
+    echo "  4) View failed service logs"
+    echo "  5) Back"
+    echo ""
+    echo -n "Select option: "
+    read -r svc_choice
+    
+    case "$svc_choice" in
+        1)
+            echo ""
+            echo -n "Service name: "
+            read -r svc_name
+            if [[ -n "$svc_name" ]]; then
+                echo ""
+                systemctl status "$svc_name" --no-pager -l 2>/dev/null || echo "Service not found or requires sudo"
+            fi
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        2)
+            echo ""
+            echo -n "Service name to restart: "
+            read -r svc_name
+            if [[ -n "$svc_name" ]]; then
+                echo ""
+                echo "Restarting $svc_name..."
+                sudo systemctl restart "$svc_name" 2>/dev/null && echo -e "${GREEN}✓${NC} Service restarted" || echo -e "${RED}✗${NC} Failed to restart"
+            fi
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        3)
+            echo ""
+            systemctl list-units --type=service --state=running --no-legend 2>/dev/null | head -20
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        4)
+            echo ""
+            failed_services=$(systemctl --failed --no-legend 2>/dev/null | awk '{print $1}')
+            if [[ -n "$failed_services" ]]; then
+                echo "Failed services:"
+                echo "$failed_services" | nl
+                echo ""
+                echo -n "Select service number to view logs: "
+                read -r svc_num
+                svc_name=$(echo "$failed_services" | sed -n "${svc_num}p")
+                if [[ -n "$svc_name" ]]; then
+                    echo ""
+                    echo "Logs for $svc_name:"
+                    sudo journalctl -u "$svc_name" -n 30 --no-pager 2>/dev/null || echo "Requires sudo"
+                fi
+            else
+                echo "No failed services"
+            fi
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        5|*)
+            ;;
+    esac
+}
+
+# Network diagnostics function
+sweets-network-diagnostics() {
+    echo -e "\033[36m\033[1m=== Network Diagnostics ===\033[0m"
+    echo ""
+    
+    echo -e "\033[1mNetwork Interfaces:\033[0m"
+    if command -v ip &>/dev/null; then
+        ip -br addr show 2>/dev/null | head -10
+    elif command -v ifconfig &>/dev/null; then
+        ifconfig 2>/dev/null | grep -E "^[a-z]|inet " | head -10
+    else
+        echo "  Network tools not available"
+    fi
+    echo ""
+    
+    echo -e "\033[1mDefault Gateway:\033[0m"
+    if command -v ip &>/dev/null; then
+        ip route | grep default | head -1 || echo "  Not found"
+    elif command -v route &>/dev/null; then
+        route -n | grep "^0.0.0.0" | head -1 || echo "  Not found"
+    else
+        echo "  Route command not available"
+    fi
+    echo ""
+    
+    echo -e "\033[1mDNS Servers:\033[0m"
+    if [[ -f /etc/resolv.conf ]]; then
+        grep nameserver /etc/resolv.conf 2>/dev/null | head -3 || echo "  Not configured"
+    else
+        echo "  /etc/resolv.conf not found"
+    fi
+    echo ""
+    
+    echo -e "\033[1mActive Connections:\033[0m"
+    if command -v ss &>/dev/null; then
+        echo "  Listening ports:"
+        ss -tuln 2>/dev/null | head -10 || echo "  (requires permissions)"
+    elif command -v netstat &>/dev/null; then
+        echo "  Listening ports:"
+        netstat -tuln 2>/dev/null | head -10 || echo "  (requires permissions)"
+    else
+        echo "  Network tools not available"
+    fi
+    echo ""
+    
+    echo -e "\033[1mConnectivity Tests:\033[0m"
+    echo "  1) Ping gateway"
+    echo "  2) Ping 8.8.8.8 (Google DNS)"
+    echo "  3) Ping google.com"
+    echo "  4) Test DNS resolution"
+    echo "  5) Back"
+    echo ""
+    echo -n "Select option: "
+    read -r net_choice
+    
+    case "$net_choice" in
+        1)
+            echo ""
+            local gateway
+            gateway=$(ip route | grep default | awk '{print $3}' | head -1)
+            if [[ -n "$gateway" ]]; then
+                echo "Pinging gateway: $gateway"
+                ping -c 4 "$gateway" 2>/dev/null || echo "Ping failed"
+            else
+                echo "Gateway not found"
+            fi
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        2)
+            echo ""
+            echo "Pinging 8.8.8.8..."
+            ping -c 4 8.8.8.8 2>/dev/null || echo "Ping failed"
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        3)
+            echo ""
+            echo "Pinging google.com..."
+            ping -c 4 google.com 2>/dev/null || echo "Ping failed"
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        4)
+            echo ""
+            echo "Testing DNS resolution..."
+            if command -v dig &>/dev/null; then
+                dig google.com +short 2>/dev/null || echo "DNS resolution failed"
+            elif command -v nslookup &>/dev/null; then
+                nslookup google.com 2>/dev/null | head -5 || echo "DNS resolution failed"
+            else
+                echo "DNS tools not available"
+            fi
+            echo ""
+            echo -e "\033[33mPress Enter to continue...\033[0m"
+            read -r
+            ;;
+        5|*)
+            ;;
+    esac
+}
+
 # Docker reinstall function
 sweets-docker-reinstall() {
     echo -e "\033[36m\033[1m=== Docker Reinstall ===\033[0m"
@@ -2306,8 +2642,11 @@ sweets-menu() {
         echo "  15) Setup Syslog Forwarding"
         echo "  16) Security Hardening (auditd + syslog)"
         echo ""
-        echo -e "\033[33m  TROUBLESHOOTING\033[0m"
+        echo -e "\033[33m  TROUBLESHOOTING & DEBUG\033[0m"
         echo "  17) Docker Troubleshooting (Diagnostics/Uninstall/Reinstall)"
+        echo "  18) System Diagnostics & Logs"
+        echo "  19) Service Status & Failed Services"
+        echo "  20) Network Diagnostics"
         echo ""
         echo -e "\033[33m  SWEETS\033[0m"
         echo "  u) Update SWEET-Scripts"
@@ -2754,6 +3093,27 @@ sweets-menu() {
                     4|*)
                         ;;
                 esac
+                ;;
+            18)
+                clear
+                sweets-system-diagnostics
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            19)
+                clear
+                sweets-service-status
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            20)
+                clear
+                sweets-network-diagnostics
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
                 ;;
             u|U)
                 clear
