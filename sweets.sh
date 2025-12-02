@@ -2363,7 +2363,8 @@ sweets-menu() {
                     echo "Options:"
                     echo "  1) Install missing packages only"
                     echo "  2) Install ALL packages from list"
-                    echo "  3) Cancel"
+                    echo "  3) Interactive package selection (choose individual packages)"
+                    echo "  4) Cancel"
                     echo ""
                     echo -n "Select option: "
                     read -r install_choice
@@ -2375,9 +2376,22 @@ sweets-menu() {
                         echo ""
                         echo "Installing ALL packages from list..."
                         bash "$install_script" --skip-zsh
-                        # Also try to install manual packages if possible
+                        # Also try to install modern CLI tools
+                        echo ""
+                        echo "[*] Installing modern CLI tools..."
+                        case "$SWEETS_DISTRO" in
+                            ubuntu|debian|pop|linuxmint)
+                                sudo apt install -y bat fd-find ripgrep fzf btop 2>/dev/null || true
+                                ;;
+                            rhel|centos|rocky|almalinux|fedora)
+                                sudo dnf install -y bat fd-find ripgrep fzf btop 2>/dev/null || true
+                                ;;
+                        esac
                         echo ""
                         echo "[*] Note: Some packages require manual installation (see list above)"
+                    elif [[ "$install_choice" == "3" ]]; then
+                        echo ""
+                        bash "$install_script" --install-packages
                     fi
                 else
                     echo "Install script not found."
