@@ -745,8 +745,8 @@ install_docker() {
             echo -e "${GREEN}[+]${NC} Installing Docker CE for Ubuntu/Debian/Kali..."
             
             # Remove old versions and moby packages (Kali-specific)
-            sudo apt remove -y docker docker-engine docker.io containerd runc moby-engine moby-containerd 2>/dev/null || true
-            sudo apt purge -y moby-engine moby-containerd 2>/dev/null || true
+            sudo apt remove -y docker docker-engine docker.io containerd runc moby-engine moby-containerd docker-buildx 2>/dev/null || true
+            sudo apt purge -y moby-engine moby-containerd docker-buildx 2>/dev/null || true
             
             # Install prerequisites
             sudo apt update
@@ -767,9 +767,7 @@ install_docker() {
             # Get distribution codename (Kali uses kali-rolling, but we need Debian codename for Docker repo)
             local distro_codename
             if [[ "$DISTRO_ID" == "kali" ]]; then
-                # Kali is based on Debian, so we need to map kali-rolling to a Debian codename
-                # For kali-rolling, we'll use bookworm (current Debian stable as of 2024)
-                # Or we can try to detect the base Debian version
+                # Kali is based on Debian bookworm (as of Dec 2023)
                 distro_codename="bookworm"
                 echo -e "${YELLOW}[*]${NC} Using Debian bookworm repository for Kali"
             else
@@ -782,21 +780,43 @@ install_docker() {
             # Update package lists
             sudo apt update
             
-            # Try to install Docker - if it fails, provide helpful error message
-            if ! sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
-                echo -e "${RED}[!]${NC} Docker installation failed"
-                echo ""
-                echo -e "${YELLOW}Troubleshooting steps:${NC}"
-                echo "  1. Check if moby packages are still installed:"
-                echo "     dpkg -l | grep moby"
-                echo "  2. Remove moby packages manually:"
-                echo "     sudo apt remove moby-engine moby-containerd moby-cli"
-                echo "     sudo apt purge moby-engine moby-containerd moby-cli"
-                echo "  3. Try installing again:"
-                echo "     sudo apt update && sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
-                echo "  4. If still failing, check repository:"
-                echo "     cat /etc/apt/sources.list.d/docker.list"
-                return 1
+            # For Kali Linux, install without docker-buildx-plugin and docker-compose-plugin initially
+            # These can cause conflicts on Kali
+            if [[ "$DISTRO_ID" == "kali" ]]; then
+                echo -e "${YELLOW}[*]${NC} Installing Docker CE for Kali (without buildx/compose plugins to avoid conflicts)..."
+                if ! sudo apt install -y docker-ce docker-ce-cli containerd.io; then
+                    echo -e "${RED}[!]${NC} Docker installation failed"
+                    echo ""
+                    echo -e "${YELLOW}Troubleshooting steps:${NC}"
+                    echo "  1. Check if moby packages are still installed:"
+                    echo "     dpkg -l | grep moby"
+                    echo "  2. Remove moby packages manually:"
+                    echo "     sudo apt remove moby-engine moby-containerd moby-cli"
+                    echo "     sudo apt purge moby-engine moby-containerd moby-cli"
+                    echo "  3. Remove docker-buildx if present:"
+                    echo "     sudo apt remove docker-buildx"
+                    echo "  4. Try installing again:"
+                    echo "     sudo apt update && sudo apt install -y docker-ce docker-ce-cli containerd.io"
+                    return 1
+                fi
+                echo -e "${GREEN}[+]${NC} Docker CE installed successfully on Kali"
+                echo -e "${YELLOW}[*]${NC} Note: docker-buildx-plugin and docker-compose-plugin skipped (may cause conflicts on Kali)"
+                echo -e "${YELLOW}[*]${NC} Docker Compose can be installed separately if needed"
+            else
+                # For other Debian-based distros, install with plugins
+                if ! sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+                    echo -e "${RED}[!]${NC} Docker installation failed"
+                    echo ""
+                    echo -e "${YELLOW}Troubleshooting steps:${NC}"
+                    echo "  1. Check if moby packages are still installed:"
+                    echo "     dpkg -l | grep moby"
+                    echo "  2. Remove moby packages manually:"
+                    echo "     sudo apt remove moby-engine moby-containerd moby-cli"
+                    echo "     sudo apt purge moby-engine moby-containerd moby-cli"
+                    echo "  3. Try installing again:"
+                    echo "     sudo apt update && sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+                    return 1
+                fi
             fi
             
             ;;
