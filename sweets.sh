@@ -61,6 +61,24 @@ _sweets_detect_distro() {
 }
 export SWEETS_DISTRO="$(_sweets_detect_distro)"
 
+# Detect LXC container
+_sweets_detect_lxc() {
+    # Check for LXC container markers
+    if [[ -f /.dockerenv ]]; then
+        return 1  # Docker, not LXC
+    elif [[ -n "$container" ]] && [[ "$container" == "lxc" ]]; then
+        return 0  # LXC detected via environment variable
+    elif grep -qa container=lxc /proc/1/environ 2>/dev/null; then
+        return 0  # LXC detected in process environment
+    elif [[ -d /dev/.lxc ]]; then
+        return 0  # LXC device directory exists
+    elif [[ -f /.lxc-boot-id ]]; then
+        return 0  # LXC boot ID file
+    else
+        return 1  # Not LXC
+    fi
+}
+
 # =============================================================================
 # WSL DETECTION & SETUP
 # =============================================================================
@@ -2455,6 +2473,22 @@ sweets-security-setup() {
     fi
     
     echo ""
+    
+    # Check if running in LXC container (auditd doesn't work in LXC)
+    if _sweets_detect_lxc; then
+        echo -e "\033[33m[!] LXC container detected\033[0m"
+        echo "[!] auditd is not supported in LXC containers (requires kernel audit support)"
+        echo "[!] Skipping auditd installation and configuration"
+        echo ""
+        echo "[+] Security hardening complete (rsyslog only - auditd skipped in LXC)"
+        echo ""
+        echo "Configured:"
+        echo "  ✓ rsyslog installed and enabled"
+        echo "  ○ auditd skipped (not supported in LXC)"
+        echo ""
+        return 0
+    fi
+    
     echo "[*] Installing and configuring auditd..."
     if ! command -v auditd &>/dev/null && ! systemctl list-unit-files 2>/dev/null | grep -q auditd; then
         case "$SWEETS_DISTRO" in
@@ -2565,9 +2599,16 @@ sweets-security-setup() {
     
     # Enable and start services
     echo "[*] Enabling services..."
-    sudo systemctl enable auditd
-    sudo systemctl restart auditd
-    [[ "$rsyslog_installed" == true ]] && sudo systemctl enable rsyslog && sudo systemctl restart rsyslog
+    if sudo systemctl enable auditd 2>/dev/null; then
+        if sudo systemctl restart auditd 2>/dev/null; then
+            echo "[+] auditd enabled and started"
+        else
+            echo "[!] auditd enabled but failed to start (check logs: sudo journalctl -u auditd)"
+        fi
+    else
+        echo "[!] Failed to enable auditd service (may not be supported in this environment)"
+    fi
+    [[ "$rsyslog_installed" == true ]] && sudo systemctl enable rsyslog 2>/dev/null && sudo systemctl restart rsyslog 2>/dev/null
     
     echo ""
     echo "[+] Security hardening complete!"
