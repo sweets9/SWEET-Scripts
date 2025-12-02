@@ -1288,6 +1288,12 @@ sweets-update() {
     local dir="${SWEETS_DIR:-$HOME/.sweet-scripts}"
     local current_version="$SWEETS_VERSION"
     local remote_version=""
+    local force_update=false
+    
+    # Check for --force flag
+    if [[ "$1" == "--force" ]] || [[ "$1" == "-f" ]]; then
+        force_update=true
+    fi
     
     echo -e "\033[36m\033[1m=== SWEET-Scripts Update ===\033[0m"
     echo ""
@@ -1312,21 +1318,28 @@ sweets-update() {
             echo ""
             
             if [[ "$remote_version" == "$current_version" ]]; then
-                echo -e "\033[33mCurrent version matches remote (v${current_version})\033[0m"
-                echo -e "\033[33mProceeding with force update...\033[0m"
-                echo ""
+                if [[ "$force_update" == true ]]; then
+                    echo -e "\033[33mForce update requested (versions match)\033[0m"
+                    echo ""
+                else
+                    echo -e "\033[33mCurrent version matches remote (v${current_version})\033[0m"
+                    echo -e "\033[33mProceeding with force update...\033[0m"
+                    echo ""
+                fi
             else
                 echo -e "\033[33mUpdate available: v${current_version} → v${remote_version}\033[0m"
                 echo ""
             fi
             
-            echo -n "Proceed with update? (Y/n): "
-            read -r confirm
-            if [[ "$confirm" =~ ^[Nn]$ ]]; then
-                echo "Update cancelled."
-                return 0
+            if [[ "$force_update" != true ]]; then
+                echo -n "Proceed with update? (Y/n): "
+                read -r confirm
+                if [[ "$confirm" =~ ^[Nn]$ ]]; then
+                    echo "Update cancelled."
+                    return 0
+                fi
+                echo ""
             fi
-            echo ""
         else
             echo -e "\033[33m[!] Could not determine remote version. Proceeding with update...\033[0m"
             echo ""
