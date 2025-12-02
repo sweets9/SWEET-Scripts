@@ -2,7 +2,7 @@
 # =============================================================================
 # SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
 # =============================================================================
-# Version: 2.2.5
+# Version: 2.2.6
 # Repository: https://github.com/sweets9/SWEET-Scripts
 # License: MIT
 # 
@@ -34,7 +34,7 @@
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-export SWEETS_VERSION="2.2.5"
+export SWEETS_VERSION="2.2.6"
 export SWEETS_DIR="${SWEETS_DIR:-$HOME/.sweet-scripts}"
 export SWEETS_CREDS_FILE="${SWEETS_CREDS_FILE:-$HOME/.sweets-credentials}"
 
@@ -295,11 +295,11 @@ alias -- -='cd -'
 # =============================================================================
 # Check for conflicts before aliasing
 if ! command -v g &>/dev/null && ! type g &>/dev/null 2>&1; then
-    alias g='git'
+alias g='git'
 fi
 # gs might conflict with ghostscript - use function to check
 if ! command -v gs &>/dev/null; then
-    alias gs='git status'
+alias gs='git status'
 else
     # gs exists (ghostscript), use gitst as fallback
     alias gitst='git status'
@@ -375,13 +375,13 @@ if [[ "$SWEETS_CONTAINER_RUNTIME" == "podman" ]]; then
     export SWEETS_CONTAINER_ENGINE="podman"
 elif [[ "$SWEETS_CONTAINER_RUNTIME" == "docker" ]]; then
     # Docker aliases
-    alias d='docker'
-    alias dc='docker compose'
-    alias dco='docker-compose'
-    alias dps='docker ps'
-    alias dpsa='docker ps -a'
-    alias di='docker images'
-    alias dex='docker exec -it'
+alias d='docker'
+alias dc='docker compose'
+alias dco='docker-compose'
+alias dps='docker ps'
+alias dpsa='docker ps -a'
+alias di='docker images'
+alias dex='docker exec -it'
     alias dcp='docker cp'
     alias dbuild='docker build'
     alias drun='docker run'
@@ -637,7 +637,7 @@ _sweets_setup_uv() {
         return 1
     fi
     
-    if command -v uv &>/dev/null; then
+if command -v uv &>/dev/null; then
         return 0
     fi
     
@@ -2916,9 +2916,9 @@ sweets-menu() {
                             
                             echo ""
                             echo -n "Enter auth key to connect (or press Enter to skip): "
-                            read -r ts_key
-                            if [[ -n "$ts_key" ]]; then
-                                echo ""
+                    read -r ts_key
+                    if [[ -n "$ts_key" ]]; then
+                        echo ""
                                 echo -n "Enable DNS? (y/N): "
                                 read -r dns_choice
                                 if [[ "$dns_choice" =~ ^[Yy]$ ]]; then
@@ -3167,7 +3167,7 @@ if [[ "$SWEETS_SHELL" == "zsh" ]]; then
     if [[ -f "$zcompdump_file" ]]; then
         # Check if file is older than 24 hours using find (works in both bash and zsh)
         if find "$zcompdump_file" -mtime +1 -print 2>/dev/null | grep -q .; then
-            compinit
+        compinit
         else
             compinit -C
         fi
