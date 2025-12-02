@@ -1038,6 +1038,11 @@ install_scripts() {
         [[ -f "$SCRIPT_DIR/uninstall.sh" ]] && cp "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/"
         echo -e "${GREEN}[+]${NC} Copied files to $INSTALL_DIR"
     fi
+    
+    # Make scripts executable
+    chmod +x "$INSTALL_DIR/sweets.sh" 2>/dev/null || true
+    [[ -f "$INSTALL_DIR/install.sh" ]] && chmod +x "$INSTALL_DIR/install.sh" 2>/dev/null || true
+    [[ -f "$INSTALL_DIR/uninstall.sh" ]] && chmod +x "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
 
     # Initialize git repo if installed locally without git
     if [[ "$INSTALL_METHOD" == "local" && ! -d "$INSTALL_DIR/.git" ]]; then
@@ -1095,6 +1100,59 @@ EOF
     if [[ -f "$HOME/.bashrc" ]]; then
         install_to_rc "$HOME/.bashrc" "bash"
     fi
+    
+    # Also install to .bash_profile if it exists (for login shells)
+    if [[ -f "$HOME/.bash_profile" ]] && ! grep -q "$MARKER" "$HOME/.bash_profile" 2>/dev/null; then
+        install_to_rc "$HOME/.bash_profile" "bash (profile)"
+    fi
+    
+    # Create wrapper scripts in ~/.local/bin (or /usr/local/bin for root)
+    local bin_dir=""
+    if [[ "$EUID" -eq 0 ]]; then
+        bin_dir="/usr/local/bin"
+    else
+        bin_dir="$HOME/.local/bin"
+    fi
+    
+    mkdir -p "$bin_dir"
+    
+    # Create sweets wrapper script
+    cat > "$bin_dir/sweets" << 'WRAPPER'
+#!/bin/bash
+# SWEET-Scripts wrapper
+if [[ -f "${SWEETS_DIR:-$HOME/.sweet-scripts}/sweets.sh" ]]; then
+    source "${SWEETS_DIR:-$HOME/.sweet-scripts}/sweets.sh"
+    sweets-menu "$@"
+else
+    echo "SWEET-Scripts not found. Please run install.sh"
+    exit 1
+fi
+WRAPPER
+    chmod +x "$bin_dir/sweets"
+    
+    # Add to PATH if not already there
+    if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
+        if [[ -f "$HOME/.bashrc" ]]; then
+            if ! grep -q "PATH.*$bin_dir" "$HOME/.bashrc" 2>/dev/null; then
+                echo "" >> "$HOME/.bashrc"
+                echo "# Add ~/.local/bin to PATH" >> "$HOME/.bashrc"
+                echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$HOME/.bashrc"
+            fi
+        fi
+        if [[ -f "$HOME/.zshrc" ]]; then
+            if ! grep -q "PATH.*$bin_dir" "$HOME/.zshrc" 2>/dev/null; then
+                echo "" >> "$HOME/.zshrc"
+                echo "# Add ~/.local/bin to PATH" >> "$HOME/.zshrc"
+                echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$HOME/.zshrc"
+            fi
+        fi
+        # For root, add to system PATH
+        if [[ "$EUID" -eq 0 ]] && [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
+            export PATH="/usr/local/bin:$PATH"
+        fi
+    fi
+    
+    echo -e "${GREEN}[+]${NC} Created wrapper script: $bin_dir/sweets"
 }
 
 # Setup vim and tmux configs
