@@ -2158,6 +2158,19 @@ sweets-menu() {
                 clear
                 echo -e "\033[36m\033[1m=== Add Credential ===\033[0m"
                 echo ""
+                echo -e "\033[1mHow credentials work:${NC}"
+                echo "  Credentials are stored as environment variables in:"
+                echo "  $SWEETS_CREDS_FILE"
+                echo ""
+                echo "  They are automatically loaded when you start a new shell."
+                echo "  Access them with: \${CRED_NAME}"
+                echo ""
+                echo "  Example:"
+                echo "    sweets-add-cred API_KEY"
+                echo "    # Then use: echo \$API_KEY"
+                echo ""
+                echo -e "\033[33m─────────────────────────────────────────────\033[0m"
+                echo ""
                 echo -n "Enter credential name: "
                 read -r cred_name
                 if [[ -n "$cred_name" ]]; then
