@@ -1123,6 +1123,7 @@ systemctl() {
 
 # Minimal service aliases (systemctl wrapper handles auto-remediation)
 alias sc='systemctl'
+alias scfailed='systemctl --failed'
 
 journalctl() {
     if [[ "$*" == *"-f"* ]] || [[ "$*" == *"--follow"* ]] || [[ "$*" == *"--vacuum"* ]]; then
@@ -1133,7 +1134,13 @@ journalctl() {
 }
 
 # Quick log viewing on startup (show recent errors/warnings)
+# Disabled by default - set SWEETS_SHOW_STARTUP_STATUS=1 to enable
 _sweets_show_startup_logs() {
+    # Only run if explicitly enabled
+    if [[ "$SWEETS_SHOW_STARTUP_STATUS" != "1" ]]; then
+        return 0
+    fi
+    
     if [[ -n "$SWEETS_QUIET" ]]; then
         return 0
     fi
@@ -1157,7 +1164,7 @@ _sweets_show_startup_logs() {
     fi
 }
 
-# Run startup log check (only once per session)
+# Run startup log check (only once per session, and only if enabled)
 if [[ -z "$SWEETS_LOG_CHECKED" ]]; then
     _sweets_show_startup_logs
     export SWEETS_LOG_CHECKED=true
