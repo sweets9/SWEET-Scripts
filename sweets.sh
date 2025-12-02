@@ -390,8 +390,20 @@ alias dex='docker exec -it'
     alias dtop='docker top'
     alias dstats='docker stats'
     
-    # Enhanced Docker functions (unalias first to avoid conflicts)
-    unalias dlogs 2>/dev/null || true
+    # Enhanced Docker functions (remove any existing alias/function first)
+    # In zsh, we need to remove aliases before defining functions
+    if [[ -n "$ZSH_VERSION" ]]; then
+        # zsh-specific: remove alias and function
+        unalias dlogs 2>/dev/null || true
+        unfunction dlogs 2>/dev/null || true
+        unalias dstart 2>/dev/null || true
+        unfunction dstart 2>/dev/null || true
+    else
+        # bash: just unalias
+        unalias dlogs 2>/dev/null || true
+        unalias dstart 2>/dev/null || true
+    fi
+    
     dlogs() {
         if [[ -n "$1" ]]; then
             docker logs -f "$1"
@@ -401,7 +413,6 @@ alias dex='docker exec -it'
         fi
     }
     
-    unalias dstart 2>/dev/null || true
     dstart() {
         if [[ -n "$1" ]]; then
             docker start "$1"
