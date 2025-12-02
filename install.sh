@@ -101,9 +101,17 @@ PACKAGES_MANUAL=(
 )
 
 show_banner() {
+    # Try to get version from sweets.sh if available, otherwise use default
+    local version="2.2.2"
+    if [[ -f "${SCRIPT_DIR}/sweets.sh" ]]; then
+        local detected_version
+        detected_version=$(grep "^export SWEETS_VERSION=" "${SCRIPT_DIR}/sweets.sh" 2>/dev/null | head -1 | sed 's/export SWEETS_VERSION="\(.*\)"/\1/' || echo "")
+        [[ -n "$detected_version" ]] && version="$detected_version"
+    fi
+    
     echo ""
     echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${BOLD}  SWEET-Scripts v2.0.0${NC}"
+    echo -e "${BOLD}  SWEET-Scripts v${version}${NC}"
     echo -e "${CYAN}  Shell Wrappers for Efficient Elevated Terminal Sessions${NC}"
     echo -e "${BLUE}  https://github.com/sweets9/SWEET-Scripts${NC}"
     echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
