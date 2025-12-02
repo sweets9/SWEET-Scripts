@@ -969,6 +969,14 @@ alias duf='df -hT'
 alias mounted='mount | column -t'
 
 # Process management
+ps() {
+    command ps aux "$@"
+}
+
+psgrep() {
+    ps aux | grep -v grep | grep "$1"
+}
+
 alias psg='ps aux | grep -v grep | grep'
 
 # System
