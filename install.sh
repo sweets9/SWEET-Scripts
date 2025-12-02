@@ -600,9 +600,32 @@ install_docker() {
     esac
     
     # Start and enable Docker
+    echo -e "${GREEN}[+]${NC} Enabling Docker service..."
+    sudo systemctl enable docker 2>/dev/null || {
+        echo -e "${YELLOW}[*]${NC} Using alternative method to enable Docker..."
+        sudo update-rc.d docker defaults 2>/dev/null || true
+    }
+    
     echo -e "${GREEN}[+]${NC} Starting Docker service..."
-    sudo systemctl enable docker
-    sudo systemctl start docker
+    sudo systemctl start docker 2>/dev/null || {
+        echo -e "${YELLOW}[*]${NC} Trying alternative method to start Docker..."
+        sudo service docker start 2>/dev/null || {
+            echo -e "${YELLOW}[*]${NC} Attempting to start dockerd directly..."
+            sudo dockerd &>/dev/null &
+            sleep 3
+        }
+    }
+    
+    # Wait a bit and check if Docker is actually running
+    sleep 3
+    if ! sudo docker info &>/dev/null; then
+        echo -e "${YELLOW}[*]${NC} Docker service may need manual start. Checking status..."
+        sudo systemctl status docker --no-pager -l || sudo service docker status || true
+        echo ""
+        echo -e "${YELLOW}[!]${NC} Docker installed but service may not be running."
+        echo -e "${YELLOW}[*]${NC} Try manually starting: sudo systemctl start docker"
+        echo -e "${YELLOW}[*]${NC} Or: sudo service docker start"
+    fi
     
     # Add user to docker group
     echo -e "${GREEN}[+]${NC} Adding user to docker group..."
@@ -627,7 +650,13 @@ install_docker() {
         echo ""
     else
         echo -e "${RED}[!]${NC} Docker installed but hello-world test failed"
-        echo -e "${YELLOW}[*]${NC} Try: sudo systemctl restart docker"
+        echo ""
+        echo -e "${YELLOW}Troubleshooting steps:${NC}"
+        echo "  1. Check service status: sudo systemctl status docker"
+        echo "  2. Start service: sudo systemctl start docker"
+        echo "  3. Or try: sudo service docker start"
+        echo "  4. Check logs: sudo journalctl -u docker -n 20"
+        echo "  5. After starting, test: sudo docker run hello-world"
         return 1
     fi
 }
