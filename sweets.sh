@@ -2,7 +2,7 @@
 # =============================================================================
 # SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
 # =============================================================================
-# Version: 2.2.7
+# Version: 2.2.8
 # Repository: https://github.com/sweets9/SWEET-Scripts
 # License: MIT
 # 
@@ -34,7 +34,7 @@
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-export SWEETS_VERSION="2.2.7"
+export SWEETS_VERSION="2.2.8"
 export SWEETS_DIR="${SWEETS_DIR:-$HOME/.sweet-scripts}"
 export SWEETS_CREDS_FILE="${SWEETS_CREDS_FILE:-$HOME/.sweets-credentials}"
 
