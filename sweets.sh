@@ -2405,15 +2405,21 @@ sweets-security-setup() {
         echo "[+] rsyslog installed"
     fi
     
-    # Fix rsyslog imklog permission issue (if /proc/kmsg is not accessible)
+    # Fix rsyslog imklog permission issue (common in LXC/Docker containers)
     if [[ "$rsyslog_installed" == true ]] && [[ -f /etc/rsyslog.conf ]]; then
         # Check if imklog module is causing issues and disable it if needed
+        # This is common in containers (LXC, Docker) where /proc/kmsg is not accessible
         if ! sudo test -r /proc/kmsg 2>/dev/null; then
-            echo "[*] Configuring rsyslog to handle /proc/kmsg permission issue..."
+            local container_type=""
+            [[ -f /.dockerenv ]] && container_type="Docker"
+            [[ -n "$container_type" ]] || [[ -d /run/systemd/container ]] && container_type="container"
+            [[ -z "$container_type" ]] && container_type="LXC/container"
+            
+            echo "[*] Detected containerized environment - configuring rsyslog..."
             # Comment out or disable imklog if it's causing errors
             if grep -q "^module.*imklog" /etc/rsyslog.conf 2>/dev/null; then
                 sudo sed -i 's/^\(module.*imklog\)/#\1/' /etc/rsyslog.conf 2>/dev/null || true
-                echo "[+] Disabled imklog module (kernel log not accessible)"
+                echo "[+] Disabled imklog module (kernel log not accessible in $container_type)"
             fi
         fi
     fi
