@@ -1289,11 +1289,11 @@ main() {
         if [[ "$SKIP_DOCKER" == false ]] && [[ "$INSTALL_DEPS" == true ]]; then
             echo -e "${YELLOW}2. Install Docker CE and Compose v2?${NC}"
             echo "   Docker Engine, CLI, and Compose plugin"
-            echo -n "   Install Docker? (Y/n): "
+            echo -n "   Install Docker? (y/N): "
             set +e
             read -r docker_choice
             set -e
-            if [[ ! "$docker_choice" =~ ^[Nn]$ ]]; then
+            if [[ "$docker_choice" =~ ^[Yy]$ ]]; then
                 INSTALL_DOCKER_CHOICE=true
             fi
             echo ""
@@ -1360,11 +1360,11 @@ main() {
         fi
         echo ""
     elif [[ "$NON_INTERACTIVE" == true ]]; then
-        # Non-interactive mode - use defaults
+        # Non-interactive mode - use defaults (Docker not installed by default)
         INSTALL_DEPS=true
-        INSTALL_DOCKER_CHOICE=true
+        INSTALL_DOCKER_CHOICE=false
         SET_ZSH_DEFAULT=true
-        echo -e "${CYAN}Non-interactive mode: Using defaults (install everything)${NC}"
+        echo -e "${CYAN}Non-interactive mode: Using defaults (Docker not installed by default)${NC}"
         echo ""
     else
         # Non-interactive terminal or flags set - show what will happen
