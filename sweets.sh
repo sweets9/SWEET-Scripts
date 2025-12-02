@@ -2576,11 +2576,10 @@ sweets-security-setup() {
         # Copy rules file to audit directory
         sudo cp "$rules_file" /etc/audit/rules.d/audit.rules
         sudo chmod 640 /etc/audit/rules.d/audit.rules
-        local rules_source=""
-        if [[ "$rules_choice" == "1" ]]; then
+        # Determine source for display
+        local rules_source="Neo23x0/auditd"
+        if [[ "${rules_choice:-2}" == "1" ]]; then
             rules_source="local"
-        else
-            rules_source="Neo23x0/auditd"
         fi
         echo "[+] Audit rules installed from: $rules_source"
         
