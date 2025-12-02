@@ -599,32 +599,28 @@ install_docker() {
             ;;
     esac
     
-    # Start and enable Docker
-    echo -e "${GREEN}[+]${NC} Enabling Docker service..."
-    sudo systemctl enable docker 2>/dev/null || {
-        echo -e "${YELLOW}[*]${NC} Using alternative method to enable Docker..."
-        sudo update-rc.d docker defaults 2>/dev/null || true
-    }
+    # Start and enable Docker service
+    echo -e "${GREEN}[+]${NC} Enabling and starting Docker service..."
+    sudo systemctl enable --now docker
     
-    echo -e "${GREEN}[+]${NC} Starting Docker service..."
-    sudo systemctl start docker 2>/dev/null || {
-        echo -e "${YELLOW}[*]${NC} Trying alternative method to start Docker..."
-        sudo service docker start 2>/dev/null || {
-            echo -e "${YELLOW}[*]${NC} Attempting to start dockerd directly..."
-            sudo dockerd &>/dev/null &
-            sleep 3
-        }
-    }
-    
-    # Wait a bit and check if Docker is actually running
+    # Wait a bit for service to be ready
     sleep 3
-    if ! sudo docker info &>/dev/null; then
-        echo -e "${YELLOW}[*]${NC} Docker service may need manual start. Checking status..."
-        sudo systemctl status docker --no-pager -l || sudo service docker status || true
+    
+    # Verify Docker is running
+    if ! sudo systemctl is-active --quiet docker; then
+        echo -e "${YELLOW}[*]${NC} Docker service not active. Attempting to start..."
+        sudo systemctl start docker
+        sleep 2
+    fi
+    
+    # Check if Docker daemon is actually responding
+    if ! sudo docker info &>/dev/null 2>&1; then
+        echo -e "${YELLOW}[*]${NC} Docker daemon not responding. Checking service status..."
+        sudo systemctl status docker --no-pager -l | head -20 || true
         echo ""
-        echo -e "${YELLOW}[!]${NC} Docker installed but service may not be running."
-        echo -e "${YELLOW}[*]${NC} Try manually starting: sudo systemctl start docker"
-        echo -e "${YELLOW}[*]${NC} Or: sudo service docker start"
+        echo -e "${YELLOW}[!]${NC} Docker installed but service may need manual intervention."
+        echo -e "${YELLOW}[*]${NC} Check logs: sudo journalctl -u docker -n 30"
+        echo -e "${YELLOW}[*]${NC} Try: sudo systemctl restart docker"
     fi
     
     # Add user to docker group
