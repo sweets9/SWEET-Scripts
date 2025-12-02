@@ -2514,17 +2514,29 @@ sweets-security-setup() {
     
     echo ""
     
-    # Check if running in LXC container (auditd doesn't work in LXC)
+    # Check if running in LXC container or if kernel audit is not available (auditd doesn't work in LXC)
+    local skip_auditd=false
+    local skip_reason=""
+    
     if _sweets_detect_lxc; then
-        echo -e "\033[33m[!] LXC container detected\033[0m"
-        echo "[!] auditd is not supported in LXC containers (requires kernel audit support)"
+        skip_auditd=true
+        skip_reason="LXC container detected"
+    elif [[ ! -d /sys/kernel/security/audit ]] && [[ ! -f /proc/sys/kernel/audit_enabled ]]; then
+        # Check if kernel audit support is available
+        skip_auditd=true
+        skip_reason="Kernel audit support not available (likely containerized environment)"
+    fi
+    
+    if [[ "$skip_auditd" == true ]]; then
+        echo -e "\033[33m[!] $skip_reason\033[0m"
+        echo "[!] auditd is not supported in this environment (requires kernel audit support)"
         echo "[!] Skipping auditd installation and configuration"
         echo ""
-        echo "[+] Security hardening complete (rsyslog only - auditd skipped in LXC)"
+        echo "[+] Security hardening complete (rsyslog only - auditd skipped)"
         echo ""
         echo "Configured:"
         echo "  ✓ rsyslog installed and enabled"
-        echo "  ○ auditd skipped (not supported in LXC)"
+        echo "  ○ auditd skipped ($skip_reason)"
         echo ""
         return 0
     fi
