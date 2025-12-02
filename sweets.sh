@@ -1367,30 +1367,26 @@ sweets-update() {
             echo ""
             
             if [[ "$remote_version" == "$current_version" ]]; then
-                if [[ "$force_update" == true ]]; then
-                    echo -e "\033[33mForce update requested (versions match)\033[0m"
-                    echo ""
-                else
-                    echo -e "\033[33mCurrent version matches remote (v${current_version})\033[0m"
-                    echo -e "\033[33mProceeding with force update...\033[0m"
-                    echo ""
-                fi
+                echo -e "\033[33mCurrent version matches remote (v${current_version})\033[0m"
+                echo -e "\033[33mProceeding with update anyway to get latest code...\033[0m"
+                echo ""
             else
                 echo -e "\033[33mUpdate available: v${current_version} → v${remote_version}\033[0m"
                 echo ""
             fi
-            
-            if [[ "$force_update" != true ]]; then
-                echo -n "Proceed with update? (Y/n): "
-                read -r confirm
-                if [[ "$confirm" =~ ^[Nn]$ ]]; then
-                    echo "Update cancelled."
-                    return 0
-                fi
-                echo ""
-            fi
         else
             echo -e "\033[33m[!] Could not determine remote version. Proceeding with update...\033[0m"
+            echo ""
+        fi
+        
+        # Always prompt unless --force flag is used
+        if [[ "$force_update" != true ]]; then
+            echo -n "Proceed with update? (Y/n): "
+            read -r confirm
+            if [[ "$confirm" =~ ^[Nn]$ ]]; then
+                echo "Update cancelled."
+                return 0
+            fi
             echo ""
         fi
         
