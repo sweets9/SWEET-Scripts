@@ -1243,13 +1243,66 @@ alias tk='tmux kill-session -t'
 # =============================================================================
 sweets-update() {
     local dir="${SWEETS_DIR:-$HOME/.sweet-scripts}"
-    echo "Updating SWEET-Scripts..."
+    local current_version="$SWEETS_VERSION"
+    local remote_version=""
+    
+    echo -e "\033[36m\033[1m=== SWEET-Scripts Update ===\033[0m"
+    echo ""
+    echo -e "Current version: \033[1mv${current_version}\033[0m"
+    echo ""
+    
     if [[ -d "$dir/.git" ]]; then
-        (cd "$dir" && git pull)
-        . "$dir/sweets.sh"
-        echo "Updated to v${SWEETS_VERSION}"
+        echo "Checking for updates..."
+        
+        # Fetch latest from remote
+        (cd "$dir" && git fetch origin main 2>/dev/null || git fetch origin 2>/dev/null) || {
+            echo -e "\033[33m[!] Could not fetch from remote. Check internet connection.\033[0m"
+            return 1
+        }
+        
+        # Get remote version from sweets.sh
+        remote_version=$(cd "$dir" && git show origin/main:sweets.sh 2>/dev/null | grep "^export SWEETS_VERSION=" | head -1 | sed 's/export SWEETS_VERSION="\(.*\)"/\1/' || \
+                        cd "$dir" && git show origin/master:sweets.sh 2>/dev/null | grep "^export SWEETS_VERSION=" | head -1 | sed 's/export SWEETS_VERSION="\(.*\)"/\1/')
+        
+        if [[ -n "$remote_version" ]]; then
+            echo -e "Latest version: \033[1mv${remote_version}\033[0m"
+            echo ""
+            
+            if [[ "$remote_version" == "$current_version" ]]; then
+                echo -e "\033[32m✓ You are already on the latest version!\033[0m"
+                return 0
+            else
+                echo -e "\033[33mUpdate available: v${current_version} → v${remote_version}\033[0m"
+                echo ""
+                echo -n "Proceed with update? (Y/n): "
+                read -r confirm
+                if [[ "$confirm" =~ ^[Nn]$ ]]; then
+                    echo "Update cancelled."
+                    return 0
+                fi
+                echo ""
+            fi
+        else
+            echo -e "\033[33m[!] Could not determine remote version. Proceeding with update...\033[0m"
+            echo ""
+        fi
+        
+        echo "Updating SWEET-Scripts..."
+        (cd "$dir" && git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || git pull)
+        
+        # Reload the script to get new version
+        . "$dir/sweets.sh" 2>/dev/null || source "$dir/sweets.sh"
+        
+        echo ""
+        if [[ -n "$remote_version" ]] && [[ "$remote_version" == "$SWEETS_VERSION" ]]; then
+            echo -e "\033[32m✓ Successfully updated to v${SWEETS_VERSION}\033[0m"
+        else
+            echo -e "\033[32m✓ Update complete. Current version: v${SWEETS_VERSION}\033[0m"
+        fi
     else
-        echo "Git repo not found. Re-run install.sh"
+        echo -e "\033[33m[!] Git repo not found in $dir\033[0m"
+        echo "Re-run install.sh to set up the repository."
+        return 1
     fi
 }
 
