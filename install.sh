@@ -611,25 +611,21 @@ TMUXCONF
 main() {
     show_banner
 
-    echo -e "${MAGENTA}This installer will:${NC}"
-    echo "  1. Install dependencies (git, zsh, tmux, vim, tree, etc.)"
-    echo "  2. Set ZSH as your default shell"
-    echo "  3. Install SWEET-Scripts"
-    echo "  4. Configure clipboard and tmux scrolling"
-    echo ""
-
-    # Parse arguments
+    # Parse arguments first
     SKIP_DEPS=false
     SKIP_ZSH_DEFAULT=false
     SKIP_DOCKER=false
     INSTALL_DOCKER=false
     SHOW_PACKAGES_ONLY=false
+    NON_INTERACTIVE=false
+    
     for arg in "$@"; do
         case $arg in
             --skip-deps) SKIP_DEPS=true ;;
             --skip-zsh) SKIP_ZSH_DEFAULT=true ;;
             --skip-docker) SKIP_DOCKER=true ;;
             --install-docker) INSTALL_DOCKER=true ;;
+            --non-interactive) NON_INTERACTIVE=true ;;
             --show-packages|--packages)
                 detect_distro
                 show_packages
@@ -637,11 +633,12 @@ main() {
                 ;;
             --help|-h)
                 echo "Usage: ./install.sh [options]"
-                echo "  --skip-deps       Skip installing dependencies"
-                echo "  --skip-zsh        Skip setting ZSH as default shell"
-                echo "  --skip-docker     Skip Docker installation prompt"
-                echo "  --install-docker  Automatically install Docker (non-interactive)"
-                echo "  --show-packages   Show package list and exit"
+                echo "  --skip-deps        Skip installing dependencies"
+                echo "  --skip-zsh         Skip setting ZSH as default shell"
+                echo "  --skip-docker      Skip Docker installation prompt"
+                echo "  --install-docker   Automatically install Docker (non-interactive)"
+                echo "  --non-interactive  Skip all prompts (use defaults)"
+                echo "  --show-packages    Show package list and exit"
                 exit 0
                 ;;
         esac
@@ -649,43 +646,175 @@ main() {
 
     detect_distro
 
-    if [[ "$SKIP_DEPS" == false ]]; then
+    # Interactive prompts (unless non-interactive or flags set)
+    INSTALL_DEPS=true
+    INSTALL_DOCKER_CHOICE=false
+    SET_ZSH_DEFAULT=true
+    
+    # Check if we can read from stdin (interactive terminal)
+    local is_interactive=false
+    if [[ -t 0 ]] && [[ -t 1 ]] && [[ -t 2 ]]; then
+        is_interactive=true
+    fi
+    
+    if [[ "$NON_INTERACTIVE" == false ]] && [[ "$is_interactive" == true ]]; then
+        echo -e "${CYAN}${BOLD}=== Installation Configuration ===${NC}"
+        echo ""
+        
+        # Check if dependencies should be installed
+        if [[ "$SKIP_DEPS" == false ]]; then
+            echo -e "${YELLOW}1. Install dependencies?${NC}"
+            echo "   Packages: git, zsh, tmux, vim, tree, jq, htop, and more"
+            echo -n "   Install dependencies? (Y/n): "
+            set +e
+            read -r deps_choice
+            set -e
+            if [[ "$deps_choice" =~ ^[Nn]$ ]]; then
+                INSTALL_DEPS=false
+            fi
+            echo ""
+        else
+            INSTALL_DEPS=false
+        fi
+        
+        # Check if Docker should be installed
+        if [[ "$SKIP_DOCKER" == false ]] && [[ "$INSTALL_DEPS" == true ]]; then
+            echo -e "${YELLOW}2. Install Docker CE and Compose v2?${NC}"
+            echo "   Docker Engine, CLI, and Compose plugin"
+            echo -n "   Install Docker? (Y/n): "
+            set +e
+            read -r docker_choice
+            set -e
+            if [[ ! "$docker_choice" =~ ^[Nn]$ ]]; then
+                INSTALL_DOCKER_CHOICE=true
+            fi
+            echo ""
+        elif [[ "$INSTALL_DOCKER" == true ]]; then
+            INSTALL_DOCKER_CHOICE=true
+        fi
+        
+        # Check if ZSH should be set as default
+        if [[ "$SKIP_ZSH_DEFAULT" == false ]]; then
+            echo -e "${YELLOW}3. Set ZSH as default shell?${NC}"
+            echo "   Changes default shell to zsh (recommended)"
+            echo -n "   Set ZSH as default? (Y/n): "
+            set +e
+            read -r zsh_choice
+            set -e
+            if [[ "$zsh_choice" =~ ^[Nn]$ ]]; then
+                SET_ZSH_DEFAULT=false
+            fi
+            echo ""
+        else
+            SET_ZSH_DEFAULT=false
+        fi
+        
+        # Always install SWEET-Scripts and configure
+        echo -e "${YELLOW}4. Install SWEET-Scripts and configure shell?${NC}"
+        echo "   Installs scripts, configures .bashrc/.zshrc, sets up enhancements"
+        echo -e "   ${GREEN}✓${NC} This will always be installed"
+        echo ""
+        
+        # Show summary
+        echo -e "${CYAN}${BOLD}=== Installation Summary ===${NC}"
+        echo ""
+        if [[ "$INSTALL_DEPS" == true ]]; then
+            echo -e "  ${GREEN}✓${NC} Install dependencies (git, zsh, tmux, vim, etc.)"
+        else
+            echo -e "  ${YELLOW}○${NC} Skip dependencies installation"
+        fi
+        
+        if [[ "$INSTALL_DOCKER_CHOICE" == true ]]; then
+            echo -e "  ${GREEN}✓${NC} Install Docker CE and Compose v2"
+        else
+            echo -e "  ${YELLOW}○${NC} Skip Docker installation"
+        fi
+        
+        if [[ "$SET_ZSH_DEFAULT" == true ]]; then
+            echo -e "  ${GREEN}✓${NC} Set ZSH as default shell"
+        else
+            echo -e "  ${YELLOW}○${NC} Keep current default shell"
+        fi
+        
+        echo -e "  ${GREEN}✓${NC} Install SWEET-Scripts"
+        echo -e "  ${GREEN}✓${NC} Configure shell integration"
+        echo -e "  ${GREEN}✓${NC} Setup clipboard and tmux enhancements"
+        echo ""
+        
+        # Final confirmation
+        echo -e "${CYAN}Proceed with installation?${NC} (Y/n): "
+        set +e
+        read -r final_confirm
+        set -e
+        if [[ "$final_confirm" =~ ^[Nn]$ ]]; then
+            echo -e "${YELLOW}Installation cancelled.${NC}"
+            exit 0
+        fi
+        echo ""
+    elif [[ "$NON_INTERACTIVE" == true ]]; then
+        # Non-interactive mode - use defaults
+        INSTALL_DEPS=true
+        INSTALL_DOCKER_CHOICE=true
+        SET_ZSH_DEFAULT=true
+        echo -e "${CYAN}Non-interactive mode: Using defaults (install everything)${NC}"
+        echo ""
+    else
+        # Non-interactive terminal or flags set - show what will happen
+        echo -e "${CYAN}${BOLD}=== Installation Configuration ===${NC}"
+        echo ""
+        echo -e "${YELLOW}Running in non-interactive mode (terminal not detected or flags set)${NC}"
+        echo ""
+        
+        if [[ "$SKIP_DEPS" == false ]]; then
+            INSTALL_DEPS=true
+            echo -e "  ${GREEN}✓${NC} Will install dependencies"
+        else
+            INSTALL_DEPS=false
+            echo -e "  ${YELLOW}○${NC} Skipping dependencies (--skip-deps flag)"
+        fi
+        
+        if [[ "$INSTALL_DOCKER" == true ]]; then
+            INSTALL_DOCKER_CHOICE=true
+            echo -e "  ${GREEN}✓${NC} Will install Docker (--install-docker flag)"
+        elif [[ "$SKIP_DOCKER" == true ]]; then
+            INSTALL_DOCKER_CHOICE=false
+            echo -e "  ${YELLOW}○${NC} Skipping Docker (--skip-docker flag)"
+        elif [[ "$INSTALL_DEPS" == true ]]; then
+            INSTALL_DOCKER_CHOICE=false
+            echo -e "  ${YELLOW}○${NC} Skipping Docker (default in non-interactive)"
+        fi
+        
+        if [[ "$SKIP_ZSH_DEFAULT" == false ]]; then
+            SET_ZSH_DEFAULT=true
+            echo -e "  ${GREEN}✓${NC} Will set ZSH as default"
+        else
+            SET_ZSH_DEFAULT=false
+            echo -e "  ${YELLOW}○${NC} Skipping ZSH default (--skip-zsh flag)"
+        fi
+        
+        echo -e "  ${GREEN}✓${NC} Will install SWEET-Scripts"
+        echo -e "  ${GREEN}✓${NC} Will configure shell integration"
+        echo -e "  ${GREEN}✓${NC} Will setup clipboard and tmux enhancements"
+        echo ""
+        echo -e "${CYAN}Proceeding with installation...${NC}"
+        echo ""
+    fi
+
+    # Execute installation
+    echo -e "${GREEN}${BOLD}Starting installation...${NC}"
+    echo ""
+    
+    if [[ "$INSTALL_DEPS" == true ]]; then
         install_dependencies
         
-        # Docker installation
-        if [[ "$SKIP_DOCKER" == true ]]; then
-            echo -e "${YELLOW}[*]${NC} Skipping Docker installation (--skip-docker flag)"
-        elif [[ "$INSTALL_DOCKER" == true ]]; then
+        if [[ "$INSTALL_DOCKER_CHOICE" == true ]]; then
             echo ""
-            echo -e "${CYAN}=== Docker Installation ===${NC}"
+            echo -e "${CYAN}=== Installing Docker ===${NC}"
             install_docker
-        elif [[ -t 0 ]] && [[ -t 1 ]]; then
-            # Interactive mode - ask user
-            echo ""
-            echo -e "${CYAN}=== Docker Installation ===${NC}"
-            echo -n "Install Docker CE and Compose v2? (y/N): "
-            # Temporarily disable set -e for read command
-            set +e
-            read -r -t 60 docker_confirm 2>/dev/null
-            local read_status=$?
-            set -e
-            if [[ $read_status -eq 0 ]]; then
-                if [[ "$docker_confirm" =~ ^[Yy]$ ]]; then
-                    install_docker
-                else
-                    echo -e "${YELLOW}[*]${NC} Skipping Docker installation"
-                fi
-            else
-                echo ""
-                echo -e "${YELLOW}[*]${NC} No input received, skipping Docker installation"
-            fi
-        else
-            echo -e "${YELLOW}[*]${NC} Non-interactive mode: Skipping Docker installation"
-            echo "  (Use --install-docker to install automatically, or install manually)"
         fi
     fi
 
-    if [[ "$SKIP_ZSH_DEFAULT" == false ]]; then
+    if [[ "$SET_ZSH_DEFAULT" == true ]]; then
         set_zsh_default
     fi
 
@@ -700,18 +829,43 @@ main() {
     echo ""
     echo -e "${BLUE}Installed to:${NC} $INSTALL_DIR"
     echo ""
-    echo -e "${YELLOW}To activate now:${NC}"
-    echo -e "  source ~/.zshrc"
-    echo ""
-    echo -e "${YELLOW}Or start a new ZSH session:${NC}"
-    echo -e "  zsh"
-    echo ""
-    echo -e "${YELLOW}Quick commands:${NC}"
-    echo -e "  sweets-help      Show all available commands"
-    echo -e "  sweets-update    Update to latest version"
-    echo -e "  sweets-setup     Re-run vim/tmux setup"
-    echo ""
-    echo -e "${CYAN}Enjoy your sweet terminal experience! 🍬${NC}"
+    
+    # Detect current shell and source appropriate rc file
+    local current_shell="${SHELL##*/}"
+    local rc_file=""
+    if [[ "$current_shell" == "zsh" ]] || [[ -n "$ZSH_VERSION" ]]; then
+        rc_file="$HOME/.zshrc"
+    elif [[ "$current_shell" == "bash" ]] || [[ -n "$BASH_VERSION" ]]; then
+        rc_file="$HOME/.bashrc"
+    fi
+    
+    if [[ -n "$rc_file" ]] && [[ -f "$rc_file" ]] && grep -q "$MARKER" "$rc_file" 2>/dev/null; then
+        echo -e "${YELLOW}Activating SWEET-Scripts in current shell...${NC}"
+        # Source the rc file to activate (suppress errors)
+        set +e
+        source "$rc_file" 2>/dev/null || true
+        set -e
+        echo -e "${GREEN}✓${NC} SWEET-Scripts activated!"
+        echo ""
+        echo "Quick commands:"
+        echo "  sweets-help      Show all available commands"
+        echo "  sweets-update    Update to latest version"
+        echo "  sweets           Interactive menu"
+        echo ""
+    else
+        echo -e "${YELLOW}To activate now:${NC}"
+        echo ""
+        if [[ -f "$HOME/.zshrc" ]]; then
+            echo "  source ~/.zshrc"
+        elif [[ -f "$HOME/.bashrc" ]]; then
+            echo "  source ~/.bashrc"
+        fi
+        echo ""
+        echo "Or start a new shell session"
+        echo ""
+    fi
+    
+    echo -e "${GREEN}Enjoy your sweet terminal experience! 🍬${NC}"
     echo ""
 }
 

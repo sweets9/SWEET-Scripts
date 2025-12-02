@@ -1265,6 +1265,38 @@ Run 'sweets-help' for commands
 EOF
 }
 
+sweets-setup() {
+    echo "Re-running vim/tmux setup..."
+    local vimrc="$HOME/.vimrc"
+    local tmuxrc="$HOME/.tmux.conf"
+    
+    # Vim clipboard
+    if [[ ! -f "$vimrc" ]] || ! grep -q "SWEET-Scripts clipboard" "$vimrc" 2>/dev/null; then
+        {
+            echo ""
+            echo "\" SWEET-Scripts clipboard"
+            echo "if has('clipboard')"
+            echo "    set clipboard=unnamedplus"
+            echo "endif"
+        } >> "$vimrc"
+        echo "[+] Vim clipboard configured"
+    fi
+    
+    # Tmux scrolling
+    if [[ ! -f "$tmuxrc" ]] || ! grep -q "SWEET-Scripts tmux" "$tmuxrc" 2>/dev/null; then
+        {
+            echo ""
+            echo "# SWEET-Scripts tmux config"
+            echo "set -g mouse on"
+            echo "bind -n WheelUpPane if-shell -F -t = \"#{mouse_any_flag}\" \"send-keys -M\" \"if-shell -t = '\"#{pane_in_mode}\"' 'send-keys -M' 'select-pane -t =; copy-mode -e; send-keys -M'\""
+            echo "bind -n WheelDownPane select-pane -t = \\; send-keys -M"
+        } >> "$tmuxrc"
+        echo "[+] Tmux scrolling configured"
+    fi
+    
+    echo "[+] Setup complete!"
+}
+
 sweets-help() {
     cat << 'EOF'
 SWEET-Scripts - Quick Reference
