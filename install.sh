@@ -621,11 +621,15 @@ main() {
     # Parse arguments
     SKIP_DEPS=false
     SKIP_ZSH_DEFAULT=false
+    SKIP_DOCKER=false
+    INSTALL_DOCKER=false
     SHOW_PACKAGES_ONLY=false
     for arg in "$@"; do
         case $arg in
             --skip-deps) SKIP_DEPS=true ;;
             --skip-zsh) SKIP_ZSH_DEFAULT=true ;;
+            --skip-docker) SKIP_DOCKER=true ;;
+            --install-docker) INSTALL_DOCKER=true ;;
             --show-packages|--packages)
                 detect_distro
                 show_packages
@@ -633,9 +637,11 @@ main() {
                 ;;
             --help|-h)
                 echo "Usage: ./install.sh [options]"
-                echo "  --skip-deps      Skip installing dependencies"
-                echo "  --skip-zsh       Skip setting ZSH as default shell"
-                echo "  --show-packages  Show package list and exit"
+                echo "  --skip-deps       Skip installing dependencies"
+                echo "  --skip-zsh        Skip setting ZSH as default shell"
+                echo "  --skip-docker     Skip Docker installation prompt"
+                echo "  --install-docker  Automatically install Docker (non-interactive)"
+                echo "  --show-packages   Show package list and exit"
                 exit 0
                 ;;
         esac
@@ -646,15 +652,36 @@ main() {
     if [[ "$SKIP_DEPS" == false ]]; then
         install_dependencies
         
-        # Ask about Docker installation
-        echo ""
-        echo -e "${CYAN}=== Docker Installation ===${NC}"
-        echo -n "Install Docker CE and Compose v2? (y/N): "
-        read -r docker_confirm
-        if [[ "$docker_confirm" =~ ^[Yy]$ ]]; then
+        # Docker installation
+        if [[ "$SKIP_DOCKER" == true ]]; then
+            echo -e "${YELLOW}[*]${NC} Skipping Docker installation (--skip-docker flag)"
+        elif [[ "$INSTALL_DOCKER" == true ]]; then
+            echo ""
+            echo -e "${CYAN}=== Docker Installation ===${NC}"
             install_docker
+        elif [[ -t 0 ]] && [[ -t 1 ]]; then
+            # Interactive mode - ask user
+            echo ""
+            echo -e "${CYAN}=== Docker Installation ===${NC}"
+            echo -n "Install Docker CE and Compose v2? (y/N): "
+            # Temporarily disable set -e for read command
+            set +e
+            read -r -t 60 docker_confirm 2>/dev/null
+            local read_status=$?
+            set -e
+            if [[ $read_status -eq 0 ]]; then
+                if [[ "$docker_confirm" =~ ^[Yy]$ ]]; then
+                    install_docker
+                else
+                    echo -e "${YELLOW}[*]${NC} Skipping Docker installation"
+                fi
+            else
+                echo ""
+                echo -e "${YELLOW}[*]${NC} No input received, skipping Docker installation"
+            fi
         else
-            echo -e "${YELLOW}[*]${NC} Skipping Docker installation"
+            echo -e "${YELLOW}[*]${NC} Non-interactive mode: Skipping Docker installation"
+            echo "  (Use --install-docker to install automatically, or install manually)"
         fi
     fi
 

@@ -7,13 +7,27 @@ A comprehensive shell enhancement toolkit for bash and zsh that makes terminal w
 ## Quick Start
 
 ```bash
-# One-liner install
+# One-liner install (requires internet)
 curl -fsSL https://raw.githubusercontent.com/sweets9/SWEET-Scripts/main/install.sh | bash
 
 # Or clone and install
 git clone https://github.com/sweets9/SWEET-Scripts.git
 cd SWEET-Scripts && ./install.sh
 ```
+
+### Offline Installation (CTF Servers / No Internet)
+
+For servers without internet access:
+
+```bash
+# 1. Transfer files to server (via SCP, USB, etc.)
+# 2. Extract and run offline installer
+tar -xzf sweet-scripts-offline.tar.gz
+cd SWEET-Scripts
+./install-offline.sh
+```
+
+See [OFFLINE_INSTALL.md](OFFLINE_INSTALL.md) for detailed instructions.
 
 ## What's Included
 
