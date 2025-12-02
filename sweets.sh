@@ -1737,6 +1737,185 @@ sweets-syslog-setup() {
 }
 
 # =============================================================================
+# SECURITY HARDENING (AUDITD + SYSLOG)
+# =============================================================================
+sweets-security-setup() {
+    echo -e "\033[1mSecurity Hardening Setup\033[0m"
+    echo "This will configure:"
+    echo "  • auditd (Linux Audit Daemon) with recommended profile"
+    echo "  • rsyslog (if not installed)"
+    echo "  • Basic security hardening"
+    echo ""
+    echo -n "Proceed with security setup? (Y/n): "
+    read -r confirm
+    if [[ "$confirm" =~ ^[Nn]$ ]]; then
+        echo "Cancelled."
+        return 0
+    fi
+    
+    echo ""
+    echo "[*] Checking for rsyslog..."
+    local rsyslog_installed=false
+    if command -v rsyslog &>/dev/null || systemctl list-unit-files 2>/dev/null | grep -q rsyslog; then
+        rsyslog_installed=true
+        echo "[+] rsyslog is installed"
+    else
+        echo "[!] rsyslog not found. Installing..."
+        case "$SWEETS_DISTRO" in
+            ubuntu|debian|pop|linuxmint)
+                sudo apt update && sudo apt install -y rsyslog
+                ;;
+            rhel|centos|rocky|almalinux|fedora)
+                sudo dnf install -y rsyslog 2>/dev/null || sudo yum install -y rsyslog
+                ;;
+            *)
+                echo "[!] Please install rsyslog manually"
+                return 1
+                ;;
+        esac
+        rsyslog_installed=true
+        echo "[+] rsyslog installed"
+    fi
+    
+    echo ""
+    echo "[*] Installing and configuring auditd..."
+    if ! command -v auditd &>/dev/null && ! systemctl list-unit-files 2>/dev/null | grep -q auditd; then
+        case "$SWEETS_DISTRO" in
+            ubuntu|debian|pop|linuxmint)
+                sudo apt install -y auditd audispd-plugins
+                ;;
+            rhel|centos|rocky|almalinux|fedora)
+                sudo dnf install -y audit audispd-plugins 2>/dev/null || sudo yum install -y audit
+                ;;
+        esac
+    fi
+    
+    # Configure auditd with recommended settings
+    echo "[*] Configuring auditd with recommended profile..."
+    
+    # Enable auditd
+    sudo sed -i 's/^active = .*/active = yes/' /etc/audit/auditd.conf 2>/dev/null || true
+    sudo sed -i 's/^write_logs = .*/write_logs = yes/' /etc/audit/auditd.conf 2>/dev/null || true
+    
+    # Set log format to enriched
+    if ! grep -q "^log_format" /etc/audit/auditd.conf 2>/dev/null; then
+        echo "log_format = ENRICHED" | sudo tee -a /etc/audit/auditd.conf >/dev/null
+    else
+        sudo sed -i 's/^log_format = .*/log_format = ENRICHED/' /etc/audit/auditd.conf 2>/dev/null || true
+    fi
+    
+    # Set max log file size (500MB)
+    sudo sed -i 's/^max_log_file = .*/max_log_file = 500/' /etc/audit/auditd.conf 2>/dev/null || true
+    sudo sed -i 's/^max_log_file_action = .*/max_log_file_action = ROTATE/' /etc/audit/auditd.conf 2>/dev/null || true
+    sudo sed -i 's/^num_logs = .*/num_logs = 5/' /etc/audit/auditd.conf 2>/dev/null || true
+    
+    # Configure audit rules (CIS Benchmark inspired)
+    echo "[*] Configuring audit rules..."
+    
+    # Backup existing rules
+    if [[ -f /etc/audit/rules.d/audit.rules ]]; then
+        sudo cp /etc/audit/rules.d/audit.rules /etc/audit/rules.d/audit.rules.backup.$(date +%Y%m%d) 2>/dev/null || true
+    fi
+    
+    # Add comprehensive audit rules
+    {
+        echo "# SWEET-Scripts Security Hardening - Audit Rules"
+        echo "# Based on CIS Benchmark recommendations"
+        echo ""
+        echo "# Delete all existing rules"
+        echo "-D"
+        echo ""
+        echo "# Buffer size"
+        echo "-b 8192"
+        echo ""
+        echo "# Failure mode"
+        echo "-f 1"
+        echo ""
+        echo "# System call auditing"
+        echo "-a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change"
+        echo "-a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change"
+        echo "-a always,exit -F arch=b64 -S clock_settime -k time-change"
+        echo "-a always,exit -F arch=b32 -S clock_settime -k time-change"
+        echo "-w /etc/localtime -p wa -k time-change"
+        echo ""
+        echo "# User and group changes"
+        echo "-w /etc/group -p wa -k identity"
+        echo "-w /etc/passwd -p wa -k identity"
+        echo "-w /etc/gshadow -p wa -k identity"
+        echo "-w /etc/shadow -p wa -k identity"
+        echo "-w /etc/security/opasswd -p wa -k identity"
+        echo ""
+        echo "# Network configuration"
+        echo "-a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale"
+        echo "-a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale"
+        echo "-w /etc/issue -p wa -k system-locale"
+        echo "-w /etc/issue.net -p wa -k system-locale"
+        echo "-w /etc/hosts -p wa -k system-locale"
+        echo "-w /etc/sysconfig/network -p wa -k system-locale"
+        echo ""
+        echo "# Login/logout"
+        echo "-w /var/log/faillog -p wa -k logins"
+        echo "-w /var/log/lastlog -p wa -k logins"
+        echo "-w /var/log/tallylog -p wa -k logins"
+        echo ""
+        echo "# Session initiation"
+        echo "-w /var/run/utmp -p wa -k session"
+        echo "-w /var/log/wtmp -p wa -k session"
+        echo "-w /var/log/btmp -p wa -k session"
+        echo ""
+        echo "# Discretionary access control"
+        echo "-a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+        echo "-a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+        echo "-a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+        echo "-a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+        echo "-a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+        echo "-a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+        echo ""
+        echo "# Unauthorized access attempts"
+        echo "-a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access"
+        echo "-a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access"
+        echo "-a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access"
+        echo "-a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access"
+        echo ""
+        echo "# Privileged commands"
+        echo "-a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts"
+        echo "-a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts"
+        echo "-a always,exit -F arch=b64 -S unshare -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k unshare"
+        echo "-a always,exit -F arch=b32 -S unshare -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k unshare"
+        echo ""
+        echo "# File deletion"
+        echo "-a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete"
+        echo "-a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete"
+        echo ""
+        echo "# Module loading"
+        echo "-w /sbin/insmod -p x -k modules"
+        echo "-w /sbin/rmmod -p x -k modules"
+        echo "-w /sbin/modprobe -p x -k modules"
+        echo "-a always,exit -F arch=b64 -S init_module -S delete_module -k modules"
+        echo ""
+        echo "# Make configuration immutable (uncomment to enable)"
+        echo "# -e 2"
+    } | sudo tee /etc/audit/rules.d/audit.rules >/dev/null
+    
+    # Enable and start services
+    echo "[*] Enabling services..."
+    sudo systemctl enable auditd
+    sudo systemctl restart auditd
+    [[ "$rsyslog_installed" == true ]] && sudo systemctl enable rsyslog && sudo systemctl restart rsyslog
+    
+    echo ""
+    echo "[+] Security hardening complete!"
+    echo ""
+    echo "Configured:"
+    echo "  ✓ auditd enabled with comprehensive rules"
+    echo "  ✓ rsyslog installed and enabled"
+    echo "  ✓ Audit rules based on CIS Benchmark"
+    echo ""
+    echo "View audit logs: sudo ausearch -k <key>"
+    echo "View recent events: sudo ausearch -m all -ts recent"
+}
+
+# =============================================================================
 # SSH KEY MANAGEMENT
 # =============================================================================
 sweets-ssh-import() {
