@@ -2,7 +2,7 @@
 # =============================================================================
 # SWEET-Scripts - Shell Wrappers for Efficient Elevated Terminal Sessions
 # =============================================================================
-# Version: 2.2.1
+# Version: 2.2.2
 # Repository: https://github.com/sweets9/SWEET-Scripts
 # License: MIT
 # 
@@ -34,7 +34,7 @@
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-export SWEETS_VERSION="2.2.1"
+export SWEETS_VERSION="2.2.2"
 export SWEETS_DIR="${SWEETS_DIR:-$HOME/.sweet-scripts}"
 export SWEETS_CREDS_FILE="${SWEETS_CREDS_FILE:-$HOME/.sweets-credentials}"
 
@@ -2034,6 +2034,9 @@ sweets-menu() {
         echo "  15) Setup Syslog Forwarding"
         echo "  16) Security Hardening (auditd + syslog)"
         echo ""
+        echo -e "\033[33m  TROUBLESHOOTING\033[0m"
+        echo "  17) Docker & Docker Compose Diagnostics"
+        echo ""
         echo -e "\033[33m  SWEETS\033[0m"
         echo "  u) Update SWEET-Scripts"
         echo "  h) Full help"
@@ -2439,6 +2442,97 @@ sweets-menu() {
                 echo ""
                 sweets-security-setup
                 echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            17)
+                clear
+                echo -e "\033[36m\033[1m=== Docker & Docker Compose Diagnostics ===\033[0m"
+                echo ""
+                
+                # Check Docker installation
+                echo -e "\033[1mDocker Installation:\033[0m"
+                if command -v docker &>/dev/null; then
+                    local docker_version
+                    docker_version=$(docker --version 2>/dev/null || echo "Unknown")
+                    echo -e "  ${GREEN}✓${NC} Docker installed: $docker_version"
+                else
+                    echo -e "  ${RED}✗${NC} Docker not installed"
+                    echo -e "  ${YELLOW}[*]${NC} Install with: bash \$SWEETS_DIR/install.sh --install-docker"
+                fi
+                echo ""
+                
+                # Check Docker Compose
+                echo -e "\033[1mDocker Compose:\033[0m"
+                if docker compose version &>/dev/null 2>&1; then
+                    local compose_version
+                    compose_version=$(docker compose version 2>/dev/null | head -1 || echo "Unknown")
+                    echo -e "  ${GREEN}✓${NC} Docker Compose installed: $compose_version"
+                elif command -v docker-compose &>/dev/null; then
+                    local compose_version
+                    compose_version=$(docker-compose --version 2>/dev/null || echo "Unknown")
+                    echo -e "  ${YELLOW}⚠${NC} Legacy docker-compose found: $compose_version"
+                    echo -e "  ${YELLOW}[*]${NC} Consider using 'docker compose' (plugin) instead"
+                else
+                    echo -e "  ${RED}✗${NC} Docker Compose not found"
+                fi
+                echo ""
+                
+                # Check Docker service
+                echo -e "\033[1mDocker Service:\033[0m"
+                if command -v systemctl &>/dev/null; then
+                    if systemctl is-active --quiet docker 2>/dev/null; then
+                        echo -e "  ${GREEN}✓${NC} Docker service is running"
+                    elif systemctl is-enabled --quiet docker 2>/dev/null; then
+                        echo -e "  ${YELLOW}⚠${NC} Docker service is enabled but not running"
+                        echo -e "  ${YELLOW}[*]${NC} Start with: sudo systemctl start docker"
+                    else
+                        echo -e "  ${RED}✗${NC} Docker service is not enabled"
+                        echo -e "  ${YELLOW}[*]${NC} Enable with: sudo systemctl enable --now docker"
+                    fi
+                else
+                    echo -e "  ${YELLOW}[*]${NC} systemctl not available (check service manually)"
+                fi
+                echo ""
+                
+                # Check Docker daemon connectivity
+                echo -e "\033[1mDocker Daemon:\033[0m"
+                if docker info &>/dev/null 2>&1; then
+                    echo -e "  ${GREEN}✓${NC} Docker daemon is accessible"
+                elif sudo docker info &>/dev/null 2>&1; then
+                    echo -e "  ${YELLOW}⚠${NC} Docker daemon requires sudo"
+                    echo -e "  ${YELLOW}[*]${NC} Add user to docker group: sudo usermod -aG docker \$USER"
+                    echo -e "  ${YELLOW}[*]${NC} Then log out and back in, or run: newgrp docker"
+                else
+                    echo -e "  ${RED}✗${NC} Cannot connect to Docker daemon"
+                    echo -e "  ${YELLOW}[*]${NC} Check if service is running: sudo systemctl status docker"
+                    echo -e "  ${YELLOW}[*]${NC} Check logs: sudo journalctl -u docker -n 30"
+                fi
+                echo ""
+                
+                # Check user in docker group
+                echo -e "\033[1mUser Permissions:\033[0m"
+                if groups 2>/dev/null | grep -qw docker; then
+                    echo -e "  ${GREEN}✓${NC} User is in docker group"
+                else
+                    echo -e "  ${YELLOW}⚠${NC} User is NOT in docker group"
+                    echo -e "  ${YELLOW}[*]${NC} Add with: sudo usermod -aG docker \$USER"
+                    echo -e "  ${YELLOW}[*]${NC} Then log out and back in, or run: newgrp docker"
+                fi
+                echo ""
+                
+                # Test Docker functionality
+                echo -e "\033[1mDocker Test:\033[0m"
+                if docker run --rm hello-world &>/dev/null 2>&1; then
+                    echo -e "  ${GREEN}✓${NC} Docker hello-world test passed"
+                elif sudo docker run --rm hello-world &>/dev/null 2>&1; then
+                    echo -e "  ${YELLOW}⚠${NC} Docker works with sudo (user not in docker group)"
+                else
+                    echo -e "  ${RED}✗${NC} Docker hello-world test failed"
+                    echo -e "  ${YELLOW}[*]${NC} Check service status and logs"
+                fi
+                echo ""
+                
                 echo -e "\033[33mPress Enter to continue...\033[0m"
                 read -r
                 ;;
