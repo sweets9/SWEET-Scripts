@@ -1092,6 +1092,7 @@ install_scripts() {
         cp "$SCRIPT_DIR/sweets.sh" "$INSTALL_DIR/"
         [[ -f "$SCRIPT_DIR/install.sh" ]] && cp "$SCRIPT_DIR/install.sh" "$INSTALL_DIR/"
         [[ -f "$SCRIPT_DIR/uninstall.sh" ]] && cp "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/"
+        [[ -f "$SCRIPT_DIR/audit.rules" ]] && cp "$SCRIPT_DIR/audit.rules" "$INSTALL_DIR/"
         echo -e "${GREEN}[+]${NC} Copied files to $INSTALL_DIR"
     fi
     

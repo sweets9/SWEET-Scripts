@@ -2463,7 +2463,8 @@ sweets-security-setup() {
             rules_file="$local_rules"
             echo "[*] Using local audit.rules from SWEET-Scripts"
         else
-            echo "[!] Local audit.rules not found, falling back to remote version"
+            echo "[!] Local audit.rules not found at: $local_rules"
+            echo "[!] Falling back to remote version"
             rules_choice="2"
         fi
     fi
@@ -2492,7 +2493,13 @@ sweets-security-setup() {
         # Copy rules file to audit directory
         sudo cp "$rules_file" /etc/audit/rules.d/audit.rules
         sudo chmod 640 /etc/audit/rules.d/audit.rules
-        echo "[+] Audit rules installed from: $([ "$rules_choice" == "1" ] && echo "local" || echo "Neo23x0/auditd")"
+        local rules_source=""
+        if [[ "$rules_choice" == "1" ]]; then
+            rules_source="local"
+        else
+            rules_source="Neo23x0/auditd"
+        fi
+        echo "[+] Audit rules installed from: $rules_source"
         
         # Clean up temp file if used
         [[ "$rules_file" =~ ^/tmp/ ]] && rm -f "$rules_file" 2>/dev/null || true
