@@ -93,7 +93,7 @@ PACKAGES_MANUAL=(
     "docker:Docker Engine:https://docs.docker.com/engine/install/"
     "kubectl:Kubernetes CLI:curl -LO 'https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl' && chmod +x kubectl && sudo mv kubectl /usr/local/bin/"
     "terraform:Terraform:https://www.terraform.io/downloads"
-    "uv:Fast Python manager:curl -LsSf https://astral.sh/uv/install.sh | sh"
+    "uv:Fast Python manager:UV_VERSION=0.40.3 curl -LsSf https://astral.sh/uv/install.sh | sh"
     "poetry:Python dependency manager:curl -sSL https://install.python-poetry.org | python3 -"
     "homebrew:Linuxbrew:/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
     "nvm:Node Version Manager:curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
@@ -231,11 +231,123 @@ _build_pkg_list() {
     echo "$result"
 }
 
+# Install manual package
+install_manual_package() {
+    local pkg_name="$1"
+    local found=false
+    local pkg_desc=""
+    local install_cmd=""
+    
+    # Search through manual packages
+    for pkg in "${PACKAGES_MANUAL[@]}"; do
+        IFS=':' read -r name desc cmd <<< "$pkg"
+        if [[ "$name" == "$pkg_name" ]]; then
+            found=true
+            pkg_desc="$desc"
+            install_cmd="$cmd"
+            break
+        fi
+    done
+    
+    if [[ "$found" == false ]]; then
+        echo "[!] Manual package '$pkg_name' not found"
+        return 1
+    fi
+    
+    echo -e "${GREEN}[*]${NC} Installing $pkg_name ($pkg_desc)..."
+    
+    # Handle special cases
+    case "$pkg_name" in
+        homebrew)
+            install_homebrew
+            return $?
+            ;;
+        docker)
+            install_docker
+            return $?
+            ;;
+        uv)
+            echo "[*] Installing uv (version 0.40.3)..."
+            if UV_VERSION=0.40.3 bash -c "$(curl -LsSf https://astral.sh/uv/install.sh)"; then
+                echo -e "${GREEN}[+]${NC} uv installed successfully"
+                # Add to PATH if needed
+                if [[ -f "$HOME/.cargo/bin/uv" ]] && [[ ":$PATH:" != *":$HOME/.cargo/bin:"* ]]; then
+                    export PATH="$HOME/.cargo/bin:$PATH"
+                fi
+                return 0
+            else
+                echo -e "${RED}[!]${NC} Failed to install uv"
+                return 1
+            fi
+            ;;
+        gemini)
+            echo "[*] Installing gemini CLI..."
+            if command -v pip3 &>/dev/null; then
+                pip3 install google-generativeai 2>/dev/null || {
+                    echo -e "${YELLOW}[*]${NC} Trying with pip..."
+                    pip install google-generativeai 2>/dev/null || {
+                        echo -e "${RED}[!]${NC} Failed to install gemini CLI"
+                        return 1
+                    }
+                }
+                echo -e "${GREEN}[+]${NC} gemini CLI installed"
+                return 0
+            else
+                echo -e "${RED}[!]${NC} pip3 not found. Install Python first."
+                return 1
+            fi
+            ;;
+        kubectl)
+            echo "[*] Installing kubectl..."
+            local kube_version
+            kube_version=$(curl -L -s https://dl.k8s.io/release/stable.txt 2>/dev/null || echo "v1.28.0")
+            if curl -LO "https://dl.k8s.io/release/${kube_version}/bin/linux/amd64/kubectl" 2>/dev/null; then
+                chmod +x kubectl
+                sudo mv kubectl /usr/local/bin/ 2>/dev/null || {
+                    mkdir -p "$HOME/.local/bin"
+                    mv kubectl "$HOME/.local/bin/"
+                    [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+                }
+                echo -e "${GREEN}[+]${NC} kubectl installed"
+                return 0
+            else
+                echo -e "${RED}[!]${NC} Failed to download kubectl"
+                return 1
+            fi
+            ;;
+        terraform)
+            echo -e "${YELLOW}[!]${NC} Terraform requires manual installation"
+            echo "  Visit: https://www.terraform.io/downloads"
+            echo "  Or use: brew install terraform (if Homebrew is installed)"
+            return 1
+            ;;
+        *)
+            # Generic installation command
+            if eval "$install_cmd"; then
+                echo -e "${GREEN}[+]${NC} $pkg_name installed successfully"
+                return 0
+            else
+                echo -e "${RED}[!]${NC} Failed to install $pkg_name"
+                return 1
+            fi
+            ;;
+    esac
+}
+
 # Install individual package by name
 install_package() {
     local pkg_name="$1"
     local found=false
     local pkg_to_install=""
+    
+    # First check if it's a manual package
+    for pkg in "${PACKAGES_MANUAL[@]}"; do
+        IFS=':' read -r name desc cmd <<< "$pkg"
+        if [[ "$name" == "$pkg_name" ]]; then
+            install_manual_package "$pkg_name"
+            return $?
+        fi
+    done
     
     # Search through all package arrays
     for pkg in "${PACKAGES_CORE[@]}" "${PACKAGES_ARCHIVE[@]}" "${PACKAGES_NET[@]}" "${PACKAGES_DEV[@]}" "${PACKAGES_MODERN[@]}" "${PACKAGES_CLIPBOARD[@]}"; do
@@ -337,7 +449,15 @@ install_packages_interactive() {
         [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
-            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            # Check if command exists (handle special cases like iputils -> ping)
+            local check_cmd="$name"
+            [[ "$name" == "iputils" ]] && check_cmd="ping"
+            [[ "$name" == "dnsutils" ]] && check_cmd="dig"
+            [[ "$name" == "net-tools" ]] && check_cmd="ifconfig"
+            [[ "$name" == "openssh-client" ]] && check_cmd="ssh"
+            [[ "$name" == "build-essential" ]] && check_cmd="gcc"
+            [[ "$name" == "fd-find" ]] && check_cmd="fd"
+            command -v "$check_cmd" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
             printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
@@ -352,7 +472,15 @@ install_packages_interactive() {
         [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
-            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            # Check if command exists (handle special cases like iputils -> ping)
+            local check_cmd="$name"
+            [[ "$name" == "iputils" ]] && check_cmd="ping"
+            [[ "$name" == "dnsutils" ]] && check_cmd="dig"
+            [[ "$name" == "net-tools" ]] && check_cmd="ifconfig"
+            [[ "$name" == "openssh-client" ]] && check_cmd="ssh"
+            [[ "$name" == "build-essential" ]] && check_cmd="gcc"
+            [[ "$name" == "fd-find" ]] && check_cmd="fd"
+            command -v "$check_cmd" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
             printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
@@ -367,7 +495,15 @@ install_packages_interactive() {
         [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
-            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            # Check if command exists (handle special cases like iputils -> ping)
+            local check_cmd="$name"
+            [[ "$name" == "iputils" ]] && check_cmd="ping"
+            [[ "$name" == "dnsutils" ]] && check_cmd="dig"
+            [[ "$name" == "net-tools" ]] && check_cmd="ifconfig"
+            [[ "$name" == "openssh-client" ]] && check_cmd="ssh"
+            [[ "$name" == "build-essential" ]] && check_cmd="gcc"
+            [[ "$name" == "fd-find" ]] && check_cmd="fd"
+            command -v "$check_cmd" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
             printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
@@ -382,7 +518,15 @@ install_packages_interactive() {
         [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
-            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            # Check if command exists (handle special cases like iputils -> ping)
+            local check_cmd="$name"
+            [[ "$name" == "iputils" ]] && check_cmd="ping"
+            [[ "$name" == "dnsutils" ]] && check_cmd="dig"
+            [[ "$name" == "net-tools" ]] && check_cmd="ifconfig"
+            [[ "$name" == "openssh-client" ]] && check_cmd="ssh"
+            [[ "$name" == "build-essential" ]] && check_cmd="gcc"
+            [[ "$name" == "fd-find" ]] && check_cmd="fd"
+            command -v "$check_cmd" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
             printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
@@ -397,11 +541,53 @@ install_packages_interactive() {
         [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
-            command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            # Check if command exists (handle special cases like iputils -> ping)
+            local check_cmd="$name"
+            [[ "$name" == "iputils" ]] && check_cmd="ping"
+            [[ "$name" == "dnsutils" ]] && check_cmd="dig"
+            [[ "$name" == "net-tools" ]] && check_cmd="ifconfig"
+            [[ "$name" == "openssh-client" ]] && check_cmd="ssh"
+            [[ "$name" == "build-essential" ]] && check_cmd="gcc"
+            [[ "$name" == "fd-find" ]] && check_cmd="fd"
+            command -v "$check_cmd" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
             printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
         fi
+    done
+    
+    # Clipboard packages
+    echo -e "\n${YELLOW}Clipboard Tools:${NC}"
+    for pkg in "${PACKAGES_CLIPBOARD[@]}"; do
+        IFS=':' read -r name apt_pkg dnf_pkg desc notes <<< "$pkg"
+        local pkg_name="$apt_pkg"
+        [[ "$DISTRO_TYPE" == "rhel" ]] && pkg_name="$dnf_pkg"
+        local status
+        if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
+            # Check if command exists (handle special cases like iputils -> ping)
+            local check_cmd="$name"
+            [[ "$name" == "iputils" ]] && check_cmd="ping"
+            [[ "$name" == "dnsutils" ]] && check_cmd="dig"
+            [[ "$name" == "net-tools" ]] && check_cmd="ifconfig"
+            [[ "$name" == "openssh-client" ]] && check_cmd="ssh"
+            [[ "$name" == "build-essential" ]] && check_cmd="gcc"
+            [[ "$name" == "fd-find" ]] && check_cmd="fd"
+            command -v "$check_cmd" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+            printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            all_packages+=("$name")
+            index=$((index + 1))
+        fi
+    done
+    
+    # Manual installation packages
+    echo -e "\n${YELLOW}Manual Installation Tools:${NC}"
+    for pkg in "${PACKAGES_MANUAL[@]}"; do
+        IFS=':' read -r name desc install <<< "$pkg"
+        local status
+        command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
+        printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
+        all_packages+=("$name")
+        index=$((index + 1))
     done
     
     echo ""
@@ -672,6 +858,108 @@ install_docker() {
         echo "  3. Or try: sudo service docker start"
         echo "  4. Check logs: sudo journalctl -u docker -n 20"
         echo "  5. After starting, test: sudo docker run hello-world"
+        return 1
+    fi
+}
+
+# Install Homebrew (Linuxbrew)
+install_homebrew() {
+    echo -e "\n${CYAN}${BOLD}=== Installing Homebrew (Linuxbrew) ===${NC}\n"
+    
+    # Check if Homebrew is already installed
+    if command -v brew &>/dev/null; then
+        local brew_version
+        brew_version=$(brew --version 2>/dev/null | head -1 || echo "Unknown")
+        echo -e "${GREEN}[+]${NC} Homebrew already installed: $brew_version"
+        return 0
+    fi
+    
+    # Check if Homebrew directories exist
+    if [[ -d "/home/linuxbrew/.linuxbrew" ]] || [[ -d "$HOME/.linuxbrew" ]]; then
+        echo -e "${YELLOW}[*]${NC} Homebrew directories found but brew command not in PATH"
+        echo -e "${GREEN}[+]${NC} Configuring shell environment..."
+        
+        # Add to .zshrc if not already there
+        local brew_eval_line=""
+        if [[ -d "/home/linuxbrew/.linuxbrew" ]]; then
+            brew_eval_line='eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+        elif [[ -d "$HOME/.linuxbrew" ]]; then
+            brew_eval_line='eval "$($HOME/.linuxbrew/bin/brew shellenv)"'
+        fi
+        
+        if [[ -n "$brew_eval_line" ]] && [[ -f "$HOME/.zshrc" ]]; then
+            if ! grep -q "brew shellenv" "$HOME/.zshrc" 2>/dev/null; then
+                echo "" >> "$HOME/.zshrc"
+                echo "$brew_eval_line" >> "$HOME/.zshrc"
+                echo -e "${GREEN}[+]${NC} Added Homebrew to ~/.zshrc"
+            fi
+        fi
+        
+        # Try to source it now
+        if [[ -d "/home/linuxbrew/.linuxbrew" ]]; then
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" 2>/dev/null || true
+        elif [[ -d "$HOME/.linuxbrew" ]]; then
+            eval "$($HOME/.linuxbrew/bin/brew shellenv)" 2>/dev/null || true
+        fi
+        
+        if command -v brew &>/dev/null; then
+            echo -e "${GREEN}✓${NC} ${BOLD}Homebrew is now available!${NC}"
+            return 0
+        fi
+    fi
+    
+    # Install Homebrew
+    echo -e "${GREEN}[+]${NC} Installing Homebrew..."
+    echo -e "${YELLOW}[*]${NC} This may take a few minutes..."
+    
+    if /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+        echo -e "${GREEN}[+]${NC} Homebrew installation completed"
+        
+        # Determine Homebrew path and add to .zshrc
+        local brew_path=""
+        local brew_eval_line=""
+        
+        if [[ -d "/home/linuxbrew/.linuxbrew" ]]; then
+            brew_path="/home/linuxbrew/.linuxbrew/bin/brew"
+            brew_eval_line='eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+        elif [[ -d "$HOME/.linuxbrew" ]]; then
+            brew_path="$HOME/.linuxbrew/bin/brew"
+            brew_eval_line='eval "$($HOME/.linuxbrew/bin/brew shellenv)"'
+        fi
+        
+        if [[ -n "$brew_eval_line" ]]; then
+            # Add to .zshrc if not already there
+            if [[ -f "$HOME/.zshrc" ]]; then
+                if ! grep -q "brew shellenv" "$HOME/.zshrc" 2>/dev/null; then
+                    echo "" >> "$HOME/.zshrc"
+                    echo "$brew_eval_line" >> "$HOME/.zshrc"
+                    echo -e "${GREEN}[+]${NC} Added Homebrew to ~/.zshrc"
+                fi
+            fi
+            
+            # Source it now
+            eval "$brew_eval_line" 2>/dev/null || true
+            
+            if command -v brew &>/dev/null; then
+                echo ""
+                echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
+                echo -e "${GREEN}║  ${BOLD}✓ Homebrew Installed Successfully!${NC}              ${GREEN}║${NC}"
+                echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
+                echo ""
+                echo -e "${BLUE}Homebrew version:${NC} $(brew --version 2>/dev/null | head -1 || echo 'N/A')"
+                echo ""
+                echo -e "${YELLOW}Note:${NC} Homebrew has been added to ~/.zshrc"
+                echo -e "${YELLOW}      ${NC} Run 'source ~/.zshrc' or start a new shell to use brew"
+                echo ""
+            else
+                echo -e "${YELLOW}[!]${NC} Homebrew installed but not in PATH"
+                echo -e "${YELLOW}[*]${NC} Run: source ~/.zshrc"
+            fi
+        else
+            echo -e "${YELLOW}[!]${NC} Could not determine Homebrew installation path"
+        fi
+    else
+        echo -e "${RED}[!]${NC} Homebrew installation failed"
         return 1
     fi
 }
