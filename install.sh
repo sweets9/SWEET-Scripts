@@ -1039,10 +1039,8 @@ install_scripts() {
         echo -e "${GREEN}[+]${NC} Copied files to $INSTALL_DIR"
     fi
     
-    # Make scripts executable
+    # Make sweets.sh executable (install.sh and uninstall.sh stay in install dir only)
     chmod +x "$INSTALL_DIR/sweets.sh" 2>/dev/null || true
-    [[ -f "$INSTALL_DIR/install.sh" ]] && chmod +x "$INSTALL_DIR/install.sh" 2>/dev/null || true
-    [[ -f "$INSTALL_DIR/uninstall.sh" ]] && chmod +x "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
 
     # Initialize git repo if installed locally without git
     if [[ "$INSTALL_METHOD" == "local" && ! -d "$INSTALL_DIR/.git" ]]; then
