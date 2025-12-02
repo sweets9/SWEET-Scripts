@@ -291,10 +291,20 @@ alias ....='cd ../../..'
 alias -- -='cd -'
 
 # =============================================================================
-# GIT SHORTCUTS
+# GIT SHORTCUTS (with conflict checking)
 # =============================================================================
-alias g='git'
-alias gs='git status'
+# Check for conflicts before aliasing
+if ! command -v g &>/dev/null && ! type g &>/dev/null 2>&1; then
+    alias g='git'
+fi
+# gs might conflict with ghostscript - use function to check
+if ! command -v gs &>/dev/null; then
+    alias gs='git status'
+else
+    # gs exists (ghostscript), use gitst as fallback
+    alias gitst='git status'
+fi
+
 alias ga='git add'
 alias gaa='git add -A'
 alias gc='git commit'
@@ -372,22 +382,208 @@ elif [[ "$SWEETS_CONTAINER_RUNTIME" == "docker" ]]; then
     alias dpsa='docker ps -a'
     alias di='docker images'
     alias dex='docker exec -it'
-    alias dlogs='docker logs -f'
-    alias dprune='docker system prune -af'
-    alias dstop='docker stop $(docker ps -q)'
-    alias drm='docker rm $(docker ps -aq)'
-    alias drmi='docker rmi $(docker images -q)'
     alias dcp='docker cp'
     alias dbuild='docker build'
     alias drun='docker run'
     alias dpull='docker pull'
     alias dpush='docker push'
-    
-    # Docker-specific
-    alias dstart='docker start'
-    alias drestart='docker restart'
     alias dtop='docker top'
     alias dstats='docker stats'
+    
+    # Enhanced Docker functions
+    dlogs() {
+        if [[ -n "$1" ]]; then
+            docker logs -f "$1"
+        else
+            echo "Usage: dlogs <container-name>"
+            docker ps
+        fi
+    }
+    
+    dstart() {
+        if [[ -n "$1" ]]; then
+            docker start "$1"
+        else
+            echo "Usage: dstart <container-name>"
+            docker ps -a
+        fi
+    }
+    
+    dstop() {
+        if [[ -n "$1" ]]; then
+            docker stop "$1"
+        else
+            echo "Stopping all running containers..."
+            docker stop $(docker ps -q) 2>/dev/null || echo "No running containers"
+        fi
+    }
+    
+    drestart() {
+        if [[ -n "$1" ]]; then
+            docker restart "$1"
+        else
+            echo "Usage: drestart <container-name>"
+            docker ps
+        fi
+    }
+    
+    dprune() {
+        echo "Cleaning up Docker system..."
+        docker system prune -af
+        echo "Cleanup complete!"
+    }
+    
+    dclean() {
+        echo "Deep cleanup: removing all stopped containers, unused networks, images, and build cache..."
+        docker system prune -af --volumes
+        echo "Deep cleanup complete!"
+    }
+    
+    # Docker backup functions
+    dbackup() {
+        local container="$1"
+        local backup_dir="${2:-./docker-backups}"
+        
+        if [[ -z "$container" ]]; then
+            echo "Usage: dbackup <container-name> [backup-dir]"
+            echo "Available containers:"
+            docker ps -a --format "table {{.Names}}\t{{.Status}}"
+            return 1
+        fi
+        
+        if ! docker ps -a --format "{{.Names}}" | grep -q "^${container}$"; then
+            echo "Error: Container '$container' not found"
+            return 1
+        fi
+        
+        mkdir -p "$backup_dir"
+        local timestamp=$(date +%Y%m%d-%H%M%S)
+        local backup_file="${backup_dir}/${container}-${timestamp}.tar"
+        
+        echo "[*] Backing up container: $container"
+        echo "[*] Backup location: $(pwd)/$backup_dir"
+        echo "[*] Saving container..."
+        docker export "$container" > "${backup_file}.container" 2>/dev/null || {
+            echo "[!] Failed to export container"
+            return 1
+        }
+        
+        echo "[*] Saving volumes..."
+        local volumes=$(docker inspect "$container" --format '{{range .Mounts}}{{if .Name}}{{.Name}} {{end}}{{end}}' 2>/dev/null)
+        if [[ -n "$volumes" ]]; then
+            for vol in $volumes; do
+                docker run --rm -v "$vol:/backup-volume" -v "$(pwd)/$backup_dir:/backup" alpine tar czf "/backup/${container}-${vol}-${timestamp}.tar.gz" -C /backup-volume . 2>/dev/null
+            done
+        fi
+        
+        echo "[+] Backup complete: ${backup_file}.container"
+        echo "[+] Backup directory: $(pwd)/$backup_dir"
+        [[ -n "$volumes" ]] && echo "[+] Volume backups: ${container}-*-${timestamp}.tar.gz"
+    }
+    
+    drestore() {
+        local backup_file="$1"
+        local container_name="$2"
+        local backup_dir="${3:-./docker-backups}"
+        
+        if [[ -z "$backup_file" ]]; then
+            echo "Usage: drestore <backup-file> [container-name] [backup-dir]"
+            echo ""
+            echo "Available backups in ${backup_dir}:"
+            ls -lh "${backup_dir}"/*.container 2>/dev/null | awk '{print $9, "(" $5 ")"}' || echo "No backups found"
+            return 1
+        fi
+        
+        # If backup_file doesn't have path, assume it's in backup_dir
+        if [[ ! "$backup_file" =~ ^/ ]] && [[ ! "$backup_file" =~ ^\./ ]]; then
+            backup_file="${backup_dir}/${backup_file}"
+        fi
+        
+        # Add .container extension if not present
+        if [[ ! "$backup_file" =~ \.container$ ]]; then
+            backup_file="${backup_file}.container"
+        fi
+        
+        if [[ ! -f "$backup_file" ]]; then
+            echo "Error: Backup file not found: $backup_file"
+            return 1
+        fi
+        
+        # Extract container name from backup file if not provided
+        if [[ -z "$container_name" ]]; then
+            container_name=$(basename "$backup_file" .container | sed 's/-[0-9]\{8\}-[0-9]\{6\}$//')
+        fi
+        
+        echo "[*] Restoring container from: $backup_file"
+        echo "[*] Container name: $container_name"
+        echo ""
+        echo -n "Proceed? (y/N): "
+        read -r confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "Cancelled."
+            return 1
+        fi
+        
+        echo "[*] Importing container..."
+        docker import "$backup_file" "$container_name:restored" 2>/dev/null || {
+            echo "[!] Failed to import container"
+            return 1
+        }
+        
+        echo "[*] Restoring volumes..."
+        local volume_files=$(ls "${backup_dir}/${container_name}"-*-*.tar.gz 2>/dev/null)
+        if [[ -n "$volume_files" ]]; then
+            for vol_file in $volume_files; do
+                local vol_name=$(basename "$vol_file" | sed "s/${container_name}-\(.*\)-.*\.tar\.gz/\1/")
+                echo "[*] Restoring volume: $vol_name"
+                docker volume create "$vol_name" 2>/dev/null || true
+                docker run --rm -v "$vol_name:/restore" -v "$(pwd)/$backup_dir:/backup" alpine sh -c "cd /restore && tar xzf /backup/$(basename $vol_file)" 2>/dev/null
+            done
+        fi
+        
+        echo "[+] Container restored: $container_name:restored"
+        echo "[+] To run: docker run -d --name $container_name $container_name:restored"
+        [[ -n "$volume_files" ]] && echo "[+] Volumes restored. Use -v flags to mount them."
+    }
+    
+    dbackup-compose() {
+        local compose_file="${1:-docker-compose.yml}"
+        local backup_dir="${2:-./docker-backups}"
+        
+        if [[ ! -f "$compose_file" ]]; then
+            echo "Error: $compose_file not found"
+            return 1
+        fi
+        
+        mkdir -p "$backup_dir"
+        local timestamp=$(date +%Y%m%d-%H%M%S)
+        local project_name=$(basename "$(pwd)")
+        
+        echo "[*] Backing up docker-compose project: $project_name"
+        
+        # Get all services
+        local services=$(docker compose -f "$compose_file" ps --services 2>/dev/null || docker-compose -f "$compose_file" ps --services 2>/dev/null)
+        
+        if [[ -z "$services" ]]; then
+            echo "[!] No running services found"
+            return 1
+        fi
+        
+        for service in $services; do
+            local container="${project_name}_${service}_1"
+            if docker ps -a --format "{{.Names}}" | grep -q "$container"; then
+                dbackup "$container" "$backup_dir" 2>/dev/null
+            fi
+        done
+        
+        # Backup compose file
+        cp "$compose_file" "${backup_dir}/${project_name}-compose-${timestamp}.yml"
+        
+        echo "[+] Compose backup complete in: $backup_dir"
+    }
+    
+    alias drm='docker rm'
+    alias drmi='docker rmi'
     
     export SWEETS_CONTAINER_ENGINE="docker"
 else
@@ -425,15 +621,33 @@ if command -v kubectl &>/dev/null; then
 fi
 
 # =============================================================================
-# PYTHON / UV / POETRY
+# PYTHON / UV / POETRY (UV-first approach)
 # =============================================================================
 alias py='python3'
 alias python='python3'
-alias pip='pip3'
 alias ipy='ipython'
 
-# UV (fast Python package manager)
-if command -v uv &>/dev/null; then
+# UV (fast Python package manager) - Primary tool with toggle
+SWEETS_USE_UV="${SWEETS_USE_UV:-auto}"
+
+_sweets_setup_uv() {
+    if [[ "$SWEETS_USE_UV" == "false" ]]; then
+        return 1
+    fi
+    
+    if command -v uv &>/dev/null; then
+        return 0
+    fi
+    
+    if [[ "$SWEETS_USE_UV" == "auto" ]]; then
+        return 1
+    fi
+    
+    return 1
+}
+
+if _sweets_setup_uv; then
+    # UV aliases
     alias uvr='uv run'
     alias uvs='uv sync'
     alias uva='uv add'
@@ -441,9 +655,149 @@ if command -v uv &>/dev/null; then
     alias uvpi='uv pip install'
     alias uvpc='uv pip compile'
     alias uvv='uv venv'
+    alias uvx='uv tool run'
+    
+    # Replace pip with uv pip install (correct command)
+    # Safe routing: Always uses virtual environments to avoid breaking system packages
+    pip() {
+        local cmd="$1"
+        
+        # For install/uninstall commands, ensure we're in a venv or warn
+        if [[ "$cmd" == "install" ]] || [[ "$cmd" == "uninstall" ]]; then
+            # Check if we're in a virtual environment
+            if [[ -z "$VIRTUAL_ENV" ]]; then
+                # Check if we're in a directory with a venv
+                if [[ ! -d ".venv" ]] && [[ ! -d "venv" ]]; then
+                    echo -e "\033[1;33m⚠ Warning: Not in a virtual environment!\033[0m"
+                    echo "Installing packages outside a venv can break system packages (especially in Kali)."
+                    echo ""
+                    echo "Options:"
+                    echo "  1) Create venv now: venv && activate"
+                    echo "  2) Use uv run instead: uv run pip install $*"
+                    echo "  3) Continue anyway (not recommended)"
+                    echo ""
+                    echo -n "Create venv and activate? (Y/n): "
+                    read -r create_venv
+                    if [[ ! "$create_venv" =~ ^[Nn]$ ]]; then
+                        uv venv .venv
+                        source .venv/bin/activate
+                        echo -e "\033[0;32m[+] Virtual environment activated\033[0m"
+                    else
+                        echo -e "\033[1;31m[!] Proceeding without venv (risky!)\033[0m"
+                        echo -n "Continue? (y/N): "
+                        read -r confirm
+                        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                            echo "Cancelled. Use 'venv' to create a virtual environment first."
+                            return 1
+                        fi
+                    fi
+                else
+                    # Venv exists but not activated
+                    echo -e "\033[1;33m⚠ Virtual environment exists but not activated.\033[0m"
+                    echo "Activating .venv..."
+                    if [[ -d ".venv" ]]; then
+                        source .venv/bin/activate
+                    elif [[ -d "venv" ]]; then
+                        source venv/bin/activate
+                    fi
+                fi
+            fi
+            
+            # Now safe to use uv pip (respects VIRTUAL_ENV)
+            uv pip "$@"
+        elif [[ "$cmd" == "list" ]] || [[ "$cmd" == "show" ]] || [[ "$cmd" == "freeze" ]]; then
+            # Read-only commands are safe
+            uv pip "$@"
+        else
+            # Fallback to system pip for other commands (like pip --version)
+            command pip3 "$@"
+        fi
+    }
+    
+    # Replace pipx with uv tool install/run
+    pipx() {
+        case "$1" in
+            install|inject|upgrade|reinstall-all|uninstall|uninstall-all|list|run)
+                if [[ "$1" == "install" ]] || [[ "$1" == "inject" ]] || [[ "$1" == "upgrade" ]]; then
+                    shift
+                    uv tool install "$@"
+                elif [[ "$1" == "run" ]]; then
+                    shift
+                    uv tool run "$@"
+                elif [[ "$1" == "list" ]]; then
+                    uv tool list
+                elif [[ "$1" == "uninstall" ]] || [[ "$1" == "uninstall-all" ]]; then
+                    echo "Note: Use 'uv tool uninstall <package>' for uv-based tool management"
+                    command pipx "$@" 2>/dev/null || echo "pipx not available, use: uv tool uninstall"
+                else
+                    command pipx "$@" 2>/dev/null || uv tool "$@"
+                fi
+                ;;
+            *)
+                command pipx "$@" 2>/dev/null || uv tool "$@"
+                ;;
+        esac
+    }
+    
+    # Use uv for virtual environments
+    venv() {
+        if [[ $# -eq 0 ]]; then
+            uv venv .venv
+            echo -e "\033[0;32m[+] Virtual environment created: .venv\033[0m"
+            echo "Activate with: activate"
+        else
+            uv venv "$@"
+        fi
+    }
+    
+    export SWEETS_USE_UV="true"
+else
+    # Fallback to standard pip/pipx if uv not available
+    alias pip='pip3'
+    
+    venv() {
+        if [[ $# -eq 0 ]]; then
+            python3 -m venv .venv
+        else
+            python3 -m venv "$@"
+        fi
+    }
+    
+    export SWEETS_USE_UV="false"
 fi
 
-# Poetry
+# Smart activate that works with both uv and standard venvs (always available)
+activate() {
+    if [[ -d ".venv" ]]; then
+        source .venv/bin/activate
+    elif [[ -d "venv" ]]; then
+        source venv/bin/activate
+    elif [[ -n "$VIRTUAL_ENV" ]]; then
+        echo "Already in virtual environment: $VIRTUAL_ENV"
+    else
+        echo "No virtual environment found. Create one with: venv"
+    fi
+}
+
+# UV toggle function
+sweets-uv-toggle() {
+    if [[ "$SWEETS_USE_UV" == "true" ]]; then
+        export SWEETS_USE_UV="false"
+        echo "UV disabled. Using standard pip/pipx."
+        echo "Reload shell or run: source ~/.${SWEETS_SHELL}rc"
+    else
+        if command -v uv &>/dev/null; then
+            export SWEETS_USE_UV="true"
+            echo "UV enabled. pip/pipx will use uv."
+            echo "Reload shell or run: source ~/.${SWEETS_SHELL}rc"
+        else
+            echo "UV not installed. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+            return 1
+        fi
+    fi
+}
+
+# Poetry (if installed)
 if command -v poetry &>/dev/null; then
     alias poe='poetry'
     alias poei='poetry install'
@@ -453,10 +807,6 @@ if command -v poetry &>/dev/null; then
     alias poeu='poetry update'
     alias poeb='poetry build'
 fi
-
-# Virtual environments
-alias venv='python3 -m venv .venv'
-alias activate='source .venv/bin/activate'
 
 # =============================================================================
 # HOMEBREW (Linux)
@@ -1123,6 +1473,185 @@ alias tsdown='sudo tailscale down'
 alias tsping='tailscale ping'
 
 # =============================================================================
+# SYSLOG FORWARDING SETUP
+# =============================================================================
+sweets-syslog-setup() {
+    # Check for syslog packages
+    local rsyslog_installed=false
+    local syslogng_installed=false
+    
+    if command -v rsyslog &>/dev/null || systemctl list-unit-files 2>/dev/null | grep -q rsyslog; then
+        rsyslog_installed=true
+    fi
+    
+    if command -v syslog-ng &>/dev/null || systemctl list-unit-files 2>/dev/null | grep -q syslog-ng; then
+        syslogng_installed=true
+    fi
+    
+    if [[ "$rsyslog_installed" == false ]] && [[ "$syslogng_installed" == false ]]; then
+        echo "[!] No syslog daemon found. Installing rsyslog..."
+        case "$SWEETS_DISTRO" in
+            ubuntu|debian|pop|linuxmint)
+                sudo apt update && sudo apt install -y rsyslog
+                ;;
+            rhel|centos|rocky|almalinux|fedora)
+                sudo dnf install -y rsyslog 2>/dev/null || sudo yum install -y rsyslog
+                ;;
+            *)
+                echo "[!] Please install rsyslog or syslog-ng manually"
+                return 1
+                ;;
+        esac
+        rsyslog_installed=true
+    fi
+    
+    echo ""
+    echo "Syslog daemon: $([ "$rsyslog_installed" == true ] && echo "rsyslog" || echo "syslog-ng")"
+    echo ""
+    
+    # Detect domain for default syslog server
+    local domain=$(hostname -d 2>/dev/null || hostname -f 2>/dev/null | cut -d. -f2-)
+    local default_udp="syslog.${domain}:514"
+    local default_tls="syslog.${domain}:6514"
+    
+    if [[ -z "$domain" ]] || [[ "$domain" == "local" ]] || [[ "$domain" == "localhost" ]]; then
+        default_udp="syslog.example.com:514"
+        default_tls="syslog.example.com:6514"
+    fi
+    
+    echo "Configure forwarding to:"
+    echo "  1) UDP syslog server (plain) - Default: $default_udp"
+    echo "  2) TCP syslog server (plain) - Default: $default_udp"
+    echo "  3) TLS syslog server (secure) - Default: $default_tls"
+    echo "  4) Setup auditd forwarding"
+    echo "  5) Cancel"
+    echo ""
+    echo -n "Select option: "
+    read -r log_choice
+    
+    case "$log_choice" in
+        1|2|3)
+            echo ""
+            echo -n "Enter syslog server address (IP or hostname) [default: ${default_udp%:*}]: "
+            read -r log_server
+            if [[ -z "$log_server" ]]; then
+                if [[ "$log_choice" == "3" ]]; then
+                    log_server="${default_tls%:*}"
+                    log_port="${default_tls#*:}"
+                else
+                    log_server="${default_udp%:*}"
+                    log_port="${default_udp#*:}"
+                fi
+            else
+                if [[ "$log_choice" == "3" ]]; then
+                    echo -n "Enter port [default 6514]: "
+                else
+                    echo -n "Enter port [default 514]: "
+                fi
+                read -r log_port
+                if [[ "$log_choice" == "3" ]]; then
+                    log_port="${log_port:-6514}"
+                else
+                    log_port="${log_port:-514}"
+                fi
+            fi
+            
+            if [[ "$log_choice" == "1" ]]; then
+                # UDP
+                if [[ "$rsyslog_installed" == true ]]; then
+                    echo "*.* @${log_server}:${log_port}" | sudo tee -a /etc/rsyslog.conf >/dev/null
+                    echo "[+] Added UDP forwarding to ${log_server}:${log_port}"
+                else
+                    echo "destination d_remote { udp(\"${log_server}\" port(${log_port})); };" | sudo tee -a /etc/syslog-ng/syslog-ng.conf >/dev/null
+                    echo "log { source(s_src); destination(d_remote); };" | sudo tee -a /etc/syslog-ng/syslog-ng.conf >/dev/null
+                    echo "[+] Added UDP forwarding to ${log_server}:${log_port}"
+                fi
+            elif [[ "$log_choice" == "2" ]]; then
+                # TCP
+                if [[ "$rsyslog_installed" == true ]]; then
+                    echo "*.* @@${log_server}:${log_port}" | sudo tee -a /etc/rsyslog.conf >/dev/null
+                    echo "[+] Added TCP forwarding to ${log_server}:${log_port}"
+                else
+                    echo "destination d_remote { tcp(\"${log_server}\" port(${log_port})); };" | sudo tee -a /etc/syslog-ng/syslog-ng.conf >/dev/null
+                    echo "log { source(s_src); destination(d_remote); };" | sudo tee -a /etc/syslog-ng/syslog-ng.conf >/dev/null
+                    echo "[+] Added TCP forwarding to ${log_server}:${log_port}"
+                fi
+            elif [[ "$log_choice" == "3" ]]; then
+                # TLS
+                echo -n "Enter CA certificate path (optional): "
+                read -r ca_cert
+                if [[ "$rsyslog_installed" == true ]]; then
+                    {
+                        echo "\$DefaultNetstreamDriver gtls"
+                        [[ -n "$ca_cert" ]] && echo "\$DefaultNetstreamDriverCAFile ${ca_cert}"
+                        echo "\$ActionSendStreamDriverMode 1"
+                        echo "\$ActionSendStreamDriverAuthMode x509/name"
+                        echo "*.* @@${log_server}:${log_port}"
+                    } | sudo tee -a /etc/rsyslog.conf >/dev/null
+                    echo "[+] Added TLS forwarding to ${log_server}:${log_port}"
+                else
+                    echo "destination d_remote { syslog(\"${log_server}\" port(${log_port}) transport(\"tls\")); };" | sudo tee -a /etc/syslog-ng/syslog-ng.conf >/dev/null
+                    echo "log { source(s_src); destination(d_remote); };" | sudo tee -a /etc/syslog-ng/syslog-ng.conf >/dev/null
+                    echo "[+] Added TLS forwarding to ${log_server}:${log_port}"
+                fi
+            fi
+            
+            echo ""
+            echo "[*] Restarting syslog daemon..."
+            if [[ "$rsyslog_installed" == true ]]; then
+                sudo systemctl restart rsyslog
+            else
+                sudo systemctl restart syslog-ng
+            fi
+            echo "[+] Syslog forwarding configured!"
+            ;;
+        4)
+            # Auditd forwarding
+            if ! command -v auditd &>/dev/null && ! systemctl list-unit-files 2>/dev/null | grep -q auditd; then
+                echo "[!] Installing auditd..."
+                case "$SWEETS_DISTRO" in
+                    ubuntu|debian|pop|linuxmint)
+                        sudo apt install -y auditd
+                        ;;
+                    rhel|centos|rocky|almalinux|fedora)
+                        sudo dnf install -y audit 2>/dev/null || sudo yum install -y audit
+                        ;;
+                esac
+            fi
+            
+            echo ""
+            echo -n "Enter syslog server for auditd: "
+            read -r audit_server
+            echo -n "Enter port (default 514): "
+            read -r audit_port
+            audit_port="${audit_port:-514}"
+            
+            # Configure auditd to forward to syslog
+            sudo sed -i 's/^active = .*/active = yes/' /etc/audit/auditd.conf 2>/dev/null || true
+            sudo sed -i 's/^write_logs = .*/write_logs = yes/' /etc/audit/auditd.conf 2>/dev/null || true
+            echo "log_format = ENRICHED" | sudo tee -a /etc/audit/auditd.conf >/dev/null
+            
+            # Add to rsyslog
+            if [[ "$rsyslog_installed" == true ]]; then
+                echo "# Auditd forwarding" | sudo tee -a /etc/rsyslog.conf >/dev/null
+                echo "if \$programname == 'auditd' then @${audit_server}:${audit_port}" | sudo tee -a /etc/rsyslog.conf >/dev/null
+                echo "& stop" | sudo tee -a /etc/rsyslog.conf >/dev/null
+            fi
+            
+            sudo systemctl enable auditd
+            sudo systemctl restart auditd
+            [[ "$rsyslog_installed" == true ]] && sudo systemctl restart rsyslog
+            
+            echo "[+] Auditd forwarding configured!"
+            ;;
+        *)
+            echo "Cancelled."
+            return 0
+            ;;
+    esac
+}
+
+# =============================================================================
 # SSH KEY MANAGEMENT
 # =============================================================================
 sweets-ssh-import() {
@@ -1233,6 +1762,9 @@ sweets-menu() {
         echo -e "\033[1m  SWEET-Scripts v${SWEETS_VERSION}\033[0m"
         echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
         echo ""
+        echo -e "\033[32m  QUICK SETUP\033[0m"
+        echo "  0) Auto Setup (Apply Sane Defaults)"
+        echo ""
         echo -e "\033[33m  INFORMATION\033[0m"
         echo "  1) Show all aliases & shortcuts"
         echo "  2) Show keyboard shortcuts"
@@ -1253,6 +1785,8 @@ sweets-menu() {
         echo "  11) Import SSH keys"
         echo "  12) Install dependencies"
         echo "  13) Show package list"
+        echo "  14) Toggle UV (Python package manager)"
+        echo "  15) Setup Syslog Forwarding"
         echo ""
         echo -e "\033[33m  SWEETS\033[0m"
         echo "  u) Update SWEET-Scripts"
@@ -1263,6 +1797,83 @@ sweets-menu() {
         read -r choice
         
         case $choice in
+            0)
+                clear
+                echo -e "\033[36m\033[1m=== Auto Setup - Sane Defaults ===\033[0m"
+                echo ""
+                echo "This will apply the following defaults:"
+                echo ""
+                echo -e "\033[1mConfiguration:\033[0m"
+                echo "  • Enable UV if available (fast Python package manager)"
+                echo "  • Setup clipboard integration (X11/Wayland)"
+                echo "  • Configure WSL if detected (X11 DISPLAY, GPU auto-detect)"
+                echo "  • Enable Docker group membership (if Docker installed)"
+                echo "  • Setup basic systemd optimizations"
+                echo ""
+                echo -e "\033[1mOptional (will prompt):\033[0m"
+                echo "  • Install recommended dependencies"
+                echo "  • Setup syslog forwarding (if domain detected)"
+                echo ""
+                echo -n "Proceed with auto setup? (y/N): "
+                read -r confirm
+                if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                    echo "Cancelled."
+                    sleep 1
+                    continue
+                fi
+                
+                echo ""
+                echo -e "\033[32m[*] Applying defaults...\033[0m"
+                
+                # Enable UV if available
+                if command -v uv &>/dev/null; then
+                    export SWEETS_USE_UV="true"
+                    echo -e "\033[32m[+] UV enabled\033[0m"
+                else
+                    echo -e "\033[33m[!] UV not installed (optional)\033[0m"
+                fi
+                
+                # WSL setup (already done on load, but confirm)
+                if [[ "$SWEETS_WSL" == "true" ]]; then
+                    echo -e "\033[32m[+] WSL detected and configured\033[0m"
+                fi
+                
+                # Docker group check
+                if command -v docker &>/dev/null && ! groups 2>/dev/null | grep -qw docker; then
+                    echo -e "\033[33m[!] Add user to docker group: sudo usermod -aG docker \$USER\033[0m"
+                fi
+                
+                # Ask about dependencies
+                echo ""
+                echo -n "Install recommended dependencies? (y/N): "
+                read -r deps_confirm
+                if [[ "$deps_confirm" =~ ^[Yy]$ ]]; then
+                    local install_script="${SWEETS_DIR:-$HOME/.sweet-scripts}/install.sh"
+                    if [[ -f "$install_script" ]]; then
+                        bash "$install_script" --skip-zsh
+                    fi
+                fi
+                
+                # Ask about syslog if domain detected
+                local domain=$(hostname -d 2>/dev/null || hostname -f 2>/dev/null | cut -d. -f2-)
+                if [[ -n "$domain" ]] && [[ "$domain" != "local" ]] && [[ "$domain" != "localhost" ]]; then
+                    echo ""
+                    echo -n "Setup syslog forwarding to syslog.${domain}:514? (y/N): "
+                    read -r syslog_confirm
+                    if [[ "$syslog_confirm" =~ ^[Yy]$ ]]; then
+                        echo "*.* @syslog.${domain}:514" | sudo tee -a /etc/rsyslog.conf >/dev/null 2>/dev/null
+                        sudo systemctl restart rsyslog 2>/dev/null
+                        echo -e "\033[32m[+] Syslog forwarding configured\033[0m"
+                    fi
+                fi
+                
+                echo ""
+                echo -e "\033[32m[+] Auto setup complete!\033[0m"
+                echo "Note: Some changes require shell reload: source ~/.${SWEETS_SHELL}rc"
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
             1)
                 clear
                 sweets-help
@@ -1380,30 +1991,83 @@ sweets-menu() {
                 echo ""
                 if command -v tailscale &>/dev/null; then
                     echo "Status:"
-                    tailscale status 2>/dev/null || echo "Not connected"
+                    tailscale status
                     echo ""
-                    echo "IP: $(tailscale ip -4 2>/dev/null || echo 'N/A')"
+                    echo "IP: $(tailscale ip -4 2>/dev/null || echo 'Not connected')"
                     echo ""
-                    echo "Commands: ts up, ts down, ts status, ts ip"
+                    echo "Quick commands:"
+                    echo "  sudo tailscale up              # Connect"
+                    echo "  sudo tailscale down            # Disconnect"
+                    echo "  tailscale status               # Show status"
+                    echo "  tailscale ip -4                # Show IP"
                 else
                     echo "Tailscale not installed."
                     echo ""
-                    echo "Install with:"
-                    echo "  - DNS disabled (default)"
-                    echo "  - Accept subnet routes enabled"
-                    echo "  - Auto-update enabled"
+                    echo "Install Tailscale:"
+                    echo "  1) Install from official repo (recommended)"
+                    echo "  2) Install using curl script"
+                    echo "  3) Cancel"
                     echo ""
-                    echo -n "Enter Tailscale auth key (or Enter to skip): "
-                    read -r ts_key
-                    if [[ -n "$ts_key" ]]; then
-                        echo ""
-                        echo -n "Enable Tailscale DNS? (y/N): "
-                        read -r ts_dns
-                        local dns_flag=""
-                        [[ "$ts_dns" =~ ^[Yy]$ ]] && dns_flag="--dns"
-                        
-                        sweets-tailscale install "$ts_key" $dns_flag
-                    fi
+                    echo -n "Select option: "
+                    read -r install_choice
+                    
+                    case "$install_choice" in
+                        1)
+                            echo ""
+                            echo "Installing Tailscale from official repository..."
+                            case "$SWEETS_DISTRO" in
+                                ubuntu|debian|pop|linuxmint)
+                                    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+                                    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+                                    sudo apt update && sudo apt install -y tailscale
+                                    ;;
+                                rhel|centos|rocky|almalinux|fedora)
+                                    sudo dnf config-manager --add-repo https://pkgs.tailscale.com/stable/fedora/tailscale.repo 2>/dev/null || \
+                                    sudo yum-config-manager --add-repo https://pkgs.tailscale.com/stable/rhel/8/tailscale.repo 2>/dev/null || true
+                                    sudo dnf install -y tailscale 2>/dev/null || sudo yum install -y tailscale
+                                    ;;
+                                *)
+                                    echo "Unknown distro, using curl installer..."
+                                    curl -fsSL https://tailscale.com/install.sh | sh
+                                    ;;
+                            esac
+                            
+                            echo ""
+                            echo "[+] Starting tailscaled..."
+                            sudo systemctl enable --now tailscaled
+                            sleep 2
+                            
+                            echo ""
+                            echo -n "Enter auth key to connect (or press Enter to skip): "
+                            read -r ts_key
+                            if [[ -n "$ts_key" ]]; then
+                                echo ""
+                                echo -n "Enable DNS? (y/N): "
+                                read -r dns_choice
+                                if [[ "$dns_choice" =~ ^[Yy]$ ]]; then
+                                    sudo tailscale up --authkey="$ts_key" --accept-dns
+                                else
+                                    sudo tailscale up --authkey="$ts_key" --accept-dns=false
+                                fi
+                                echo ""
+                                echo "[+] Tailscale connected!"
+                                tailscale status
+                            else
+                                echo ""
+                                echo "To connect later, run: sudo tailscale up --authkey=<your-key>"
+                            fi
+                            ;;
+                        2)
+                            echo ""
+                            echo "Installing using official installer script..."
+                            curl -fsSL https://tailscale.com/install.sh | sh
+                            echo ""
+                            echo "To connect, run: sudo tailscale up --authkey=<your-key>"
+                            ;;
+                        *)
+                            echo "Cancelled."
+                            ;;
+                    esac
                 fi
                 echo ""
                 echo -e "\033[33mPress Enter to continue...\033[0m"
@@ -1457,6 +2121,26 @@ sweets-menu() {
                 else
                     echo "Install script not found."
                 fi
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            14)
+                clear
+                echo -e "\033[36m\033[1m=== UV Toggle ===\033[0m"
+                echo ""
+                echo "Current UV status: $SWEETS_USE_UV"
+                echo ""
+                sweets-uv-toggle
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            15)
+                clear
+                echo -e "\033[36m\033[1m=== Syslog Forwarding Setup ===\033[0m"
+                echo ""
+                sweets-syslog-setup
                 echo ""
                 echo -e "\033[33mPress Enter to continue...\033[0m"
                 read -r

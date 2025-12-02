@@ -296,6 +296,130 @@ install_dependencies() {
     echo -e "${GREEN}[+]${NC} Dependencies installed!"
 }
 
+# Install Docker CE and Compose v2
+install_docker() {
+    echo -e "\n${CYAN}${BOLD}=== Installing Docker CE and Compose v2 ===${NC}\n"
+    
+    # Check if Docker is already installed
+    if command -v docker &>/dev/null; then
+        local docker_version
+        docker_version=$(docker --version 2>/dev/null)
+        echo -e "${GREEN}[+]${NC} Docker already installed: $docker_version"
+        
+        # Check if user is in docker group
+        if ! groups 2>/dev/null | grep -qw docker; then
+            echo -e "${YELLOW}[*]${NC} Adding user to docker group..."
+            sudo usermod -aG docker "$USER"
+            echo -e "${GREEN}[+]${NC} User added to docker group (log out/in for changes)"
+        fi
+        
+        # Test Docker
+        echo -e "${GREEN}[+]${NC} Testing Docker installation..."
+        if sudo docker run --rm hello-world &>/dev/null; then
+            echo -e "${GREEN}✓${NC} ${BOLD}Docker is working correctly!${NC}"
+        else
+            echo -e "${YELLOW}[!]${NC} Docker installed but hello-world test failed"
+        fi
+        return 0
+    fi
+    
+    case "$PKG_MANAGER" in
+        apt)
+            echo -e "${GREEN}[+]${NC} Installing Docker CE for Ubuntu/Debian..."
+            
+            # Remove old versions
+            sudo apt remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+            
+            # Install prerequisites
+            sudo apt update
+            sudo apt install -y ca-certificates curl gnupg lsb-release
+            
+            # Add Docker's official GPG key
+            sudo install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/${DISTRO_ID}/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            sudo chmod a+r /etc/apt/keyrings/docker.gpg
+            
+            # Set up repository
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DISTRO_ID} $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            
+            # Install Docker
+            sudo apt update
+            sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            
+            ;;
+        dnf)
+            echo -e "${GREEN}[+]${NC} Installing Docker CE for RHEL/Fedora..."
+            
+            # Remove old versions
+            sudo dnf remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine 2>/dev/null || true
+            
+            # Install prerequisites
+            sudo dnf install -y dnf-plugins-core
+            
+            # Add Docker repository
+            if [[ "$DISTRO_ID" == "fedora" ]]; then
+                sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+            else
+                sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+            fi
+            
+            # Install Docker
+            sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            
+            ;;
+        yum)
+            echo -e "${GREEN}[+]${NC} Installing Docker CE for RHEL/CentOS (yum)..."
+            
+            # Install prerequisites
+            sudo yum install -y yum-utils
+            
+            # Add Docker repository
+            sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+            
+            # Install Docker
+            sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            
+            ;;
+        *)
+            echo -e "${YELLOW}[!]${NC} Unknown package manager. Install Docker manually:"
+            echo "  https://docs.docker.com/engine/install/"
+            return 1
+            ;;
+    esac
+    
+    # Start and enable Docker
+    echo -e "${GREEN}[+]${NC} Starting Docker service..."
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    
+    # Add user to docker group
+    echo -e "${GREEN}[+]${NC} Adding user to docker group..."
+    sudo usermod -aG docker "$USER"
+    
+    # Test Docker installation
+    echo -e "${GREEN}[+]${NC} Testing Docker installation..."
+    sleep 2  # Brief pause for service to be ready
+    
+    if sudo docker run --rm hello-world &>/dev/null; then
+        echo ""
+        echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${GREEN}║  ${BOLD}✓ Docker CE and Compose v2 Installed Successfully!${NC}  ${GREEN}║${NC}"
+        echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${BLUE}Docker version:${NC} $(sudo docker --version)"
+        echo -e "${BLUE}Compose version:${NC} $(sudo docker compose version 2>/dev/null || echo 'N/A')"
+        echo ""
+        echo -e "${YELLOW}Note:${NC} You've been added to the docker group."
+        echo -e "${YELLOW}      ${NC} Log out and back in, or run: newgrp docker"
+        echo -e "${YELLOW}      ${NC} Then you can use docker without sudo!"
+        echo ""
+    else
+        echo -e "${RED}[!]${NC} Docker installed but hello-world test failed"
+        echo -e "${YELLOW}[*]${NC} Try: sudo systemctl restart docker"
+        return 1
+    fi
+}
+
 # Set zsh as default shell
 set_zsh_default() {
     echo -e "\n${CYAN}=== Setting ZSH as Default Shell ===${NC}\n"
@@ -521,6 +645,17 @@ main() {
 
     if [[ "$SKIP_DEPS" == false ]]; then
         install_dependencies
+        
+        # Ask about Docker installation
+        echo ""
+        echo -e "${CYAN}=== Docker Installation ===${NC}"
+        echo -n "Install Docker CE and Compose v2? (y/N): "
+        read -r docker_confirm
+        if [[ "$docker_confirm" =~ ^[Yy]$ ]]; then
+            install_docker
+        else
+            echo -e "${YELLOW}[*]${NC} Skipping Docker installation"
+        fi
     fi
 
     if [[ "$SKIP_ZSH_DEFAULT" == false ]]; then
