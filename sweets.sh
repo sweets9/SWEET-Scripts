@@ -1871,6 +1871,7 @@ sweets-menu() {
         echo "  13) Show package list"
         echo "  14) Toggle UV (Python package manager)"
         echo "  15) Setup Syslog Forwarding"
+        echo "  16) Security Hardening (auditd + syslog)"
         echo ""
         echo -e "\033[33m  SWEETS\033[0m"
         echo "  u) Update SWEET-Scripts"
@@ -2198,12 +2199,24 @@ sweets-menu() {
                 if [[ -f "$install_script" ]]; then
                     bash "$install_script" --show-packages
                     echo ""
-                    echo -e "\033[1mInstall missing packages?${NC} (y/N): "
+                    echo "Options:"
+                    echo "  1) Install missing packages only"
+                    echo "  2) Install ALL packages from list"
+                    echo "  3) Cancel"
+                    echo ""
+                    echo -n "Select option: "
                     read -r install_choice
-                    if [[ "$install_choice" =~ ^[Yy]$ ]]; then
+                    if [[ "$install_choice" == "1" ]]; then
                         echo ""
-                        echo "Installing dependencies..."
+                        echo "Installing missing dependencies..."
                         bash "$install_script" --skip-zsh
+                    elif [[ "$install_choice" == "2" ]]; then
+                        echo ""
+                        echo "Installing ALL packages from list..."
+                        bash "$install_script" --skip-zsh
+                        # Also try to install manual packages if possible
+                        echo ""
+                        echo "[*] Note: Some packages require manual installation (see list above)"
                     fi
                 else
                     echo "Install script not found."
@@ -2228,6 +2241,15 @@ sweets-menu() {
                 echo -e "\033[36m\033[1m=== Syslog Forwarding Setup ===\033[0m"
                 echo ""
                 sweets-syslog-setup
+                echo ""
+                echo -e "\033[33mPress Enter to continue...\033[0m"
+                read -r
+                ;;
+            16)
+                clear
+                echo -e "\033[36m\033[1m=== Security Hardening ===\033[0m"
+                echo ""
+                sweets-security-setup
                 echo ""
                 echo -e "\033[33mPress Enter to continue...\033[0m"
                 read -r
