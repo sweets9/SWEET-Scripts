@@ -742,26 +742,62 @@ install_docker() {
     
     case "$PKG_MANAGER" in
         apt)
-            echo -e "${GREEN}[+]${NC} Installing Docker CE for Ubuntu/Debian..."
+            echo -e "${GREEN}[+]${NC} Installing Docker CE for Ubuntu/Debian/Kali..."
             
-            # Remove old versions
-            sudo apt remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+            # Remove old versions and moby packages (Kali-specific)
+            sudo apt remove -y docker docker-engine docker.io containerd runc moby-engine moby-containerd 2>/dev/null || true
+            sudo apt purge -y moby-engine moby-containerd 2>/dev/null || true
             
             # Install prerequisites
             sudo apt update
             sudo apt install -y ca-certificates curl gnupg lsb-release
             
+            # Determine repository ID (Kali uses Debian repository)
+            local docker_repo_id="$DISTRO_ID"
+            if [[ "$DISTRO_ID" == "kali" ]]; then
+                docker_repo_id="debian"
+                echo -e "${YELLOW}[*]${NC} Kali Linux detected - using Debian Docker repository"
+            fi
+            
             # Add Docker's official GPG key
             sudo install -m 0755 -d /etc/apt/keyrings
-            curl -fsSL https://download.docker.com/linux/${DISTRO_ID}/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            curl -fsSL https://download.docker.com/linux/${docker_repo_id}/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
             sudo chmod a+r /etc/apt/keyrings/docker.gpg
             
-            # Set up repository
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DISTRO_ID} $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            # Get distribution codename (Kali uses kali-rolling, but we need Debian codename for Docker repo)
+            local distro_codename
+            if [[ "$DISTRO_ID" == "kali" ]]; then
+                # Kali is based on Debian, so we need to map kali-rolling to a Debian codename
+                # For kali-rolling, we'll use bookworm (current Debian stable as of 2024)
+                # Or we can try to detect the base Debian version
+                distro_codename="bookworm"
+                echo -e "${YELLOW}[*]${NC} Using Debian bookworm repository for Kali"
+            else
+                distro_codename=$(lsb_release -cs)
+            fi
             
-            # Install Docker
+            # Set up repository
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${docker_repo_id} ${distro_codename} stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            
+            # Update package lists
             sudo apt update
-            sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            
+            # Try to install Docker - if it fails, provide helpful error message
+            if ! sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+                echo -e "${RED}[!]${NC} Docker installation failed"
+                echo ""
+                echo -e "${YELLOW}Troubleshooting steps:${NC}"
+                echo "  1. Check if moby packages are still installed:"
+                echo "     dpkg -l | grep moby"
+                echo "  2. Remove moby packages manually:"
+                echo "     sudo apt remove moby-engine moby-containerd moby-cli"
+                echo "     sudo apt purge moby-engine moby-containerd moby-cli"
+                echo "  3. Try installing again:"
+                echo "     sudo apt update && sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+                echo "  4. If still failing, check repository:"
+                echo "     cat /etc/apt/sources.list.d/docker.list"
+                return 1
+            fi
             
             ;;
         dnf)
