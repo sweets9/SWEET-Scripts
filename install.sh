@@ -319,7 +319,7 @@ install_packages_interactive() {
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
             command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
-            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
         fi
@@ -334,7 +334,7 @@ install_packages_interactive() {
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
             command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
-            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
         fi
@@ -349,7 +349,7 @@ install_packages_interactive() {
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
             command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
-            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
         fi
@@ -364,7 +364,7 @@ install_packages_interactive() {
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
             command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
-            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
         fi
@@ -379,7 +379,7 @@ install_packages_interactive() {
         local status
         if [[ "$pkg_name" != "-" ]] && [[ "$pkg_name" != "@"* ]]; then
             command -v "$name" &>/dev/null && status="${GREEN}✓${NC}" || status="${YELLOW}○${NC}"
-            printf "  %2d) %s %-20s - %s\n" "$index" "$status" "$name" "$desc"
+            printf "  %2d) %b %-20s - %s\n" "$index" "$status" "$name" "$desc"
             all_packages+=("$name")
             index=$((index + 1))
         fi
